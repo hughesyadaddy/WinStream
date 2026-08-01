@@ -42,13 +42,32 @@ public sealed class RtspResponse
     public string? Transport =>
         Headers.TryGetValue("Transport", out var value) ? value : null;
 
+    /// <summary>
+    /// Raw <c>WWW-Authenticate</c> challenge, present when the receiver has an
+    /// AirPlay password. Carries only a realm and nonce, never the password.
+    /// </summary>
+    public string? AuthenticationChallenge =>
+        Headers.TryGetValue("WWW-Authenticate", out var value) && !string.IsNullOrWhiteSpace(value)
+            ? value
+            : null;
+
+    /// <summary>The receiver rejected this request with RTSP 401.</summary>
+    public bool IsUnauthorized => StatusCode == 401;
+
     public void EnsureSuccess(string method)
     {
-        if (!IsSuccessStatusCode)
+        if (IsSuccessStatusCode)
         {
-            throw new InvalidOperationException(
-                $"{method} failed with RTSP {StatusCode} {ReasonPhrase}.");
+            return;
         }
+
+        // Without this note a password-protected receiver reads as a pairing
+        // failure, which sends the user back to re-typing a code that was fine.
+        var hint = IsUnauthorized
+            ? " The receiver is asking for its AirPlay password."
+            : string.Empty;
+        throw new InvalidOperationException(
+            $"{method} failed with RTSP {StatusCode} {ReasonPhrase}.{hint}");
     }
 
     public static RtspResponse Parse(string headerText, ReadOnlyMemory<byte> body = default)

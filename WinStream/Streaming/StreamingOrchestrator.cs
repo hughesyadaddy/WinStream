@@ -24,7 +24,9 @@ public sealed class StreamingOrchestrator : IAsyncDisposable
 
     private readonly string? _senderDeviceId;
     private readonly IPairingCredentialStore _pairingStore;
+    private readonly IReceiverPasswordStore _passwordStore;
     private Func<CancellationToken, Task<string?>>? _requestPairingPinAsync;
+    private Func<CancellationToken, Task<string?>>? _requestReceiverPasswordAsync;
     private readonly SemaphoreSlim _lifecycle = new(1, 1);
     private readonly Dictionary<string, SessionEntry> _sessions = new(StringComparer.Ordinal);
     private readonly PcmFanoutClock _fanoutClock = new();
@@ -52,10 +54,12 @@ public sealed class StreamingOrchestrator : IAsyncDisposable
     /// </param>
     public StreamingOrchestrator(
         string? senderDeviceId = null,
-        IPairingCredentialStore? pairingStore = null)
+        IPairingCredentialStore? pairingStore = null,
+        IReceiverPasswordStore? passwordStore = null)
     {
         _senderDeviceId = senderDeviceId;
         _pairingStore = pairingStore ?? new PairingCredentialStore();
+        _passwordStore = passwordStore ?? new ReceiverPasswordStore();
         _resilience.RecoverRequested += OnRecoverRequested;
     }
 
@@ -66,6 +70,14 @@ public sealed class StreamingOrchestrator : IAsyncDisposable
     /// </summary>
     public void SetPairingPinPrompt(Func<CancellationToken, Task<string?>>? requestPinAsync) =>
         _requestPairingPinAsync = requestPinAsync;
+
+    /// <summary>
+    /// Supplies the UI callback that collects the AirPlay Receiver password when
+    /// mDNS advertises PasswordRequired and nothing is stored yet.
+    /// </summary>
+    public void SetReceiverPasswordPrompt(
+        Func<CancellationToken, Task<string?>>? requestPasswordAsync) =>
+        _requestReceiverPasswordAsync = requestPasswordAsync;
 
     public event EventHandler<SessionStateChanged>? StateChanged;
 
@@ -113,15 +125,24 @@ public sealed class StreamingOrchestrator : IAsyncDisposable
     }
 
     /// <summary>
-    /// Drops the stored HomeKit identity for this receiver so the next connect re-runs
-    /// pair-setup (AirPlay code or password). Does not tear down a live session —
-    /// disconnect first when a clean re-pair is required.
+    /// Drops the stored HomeKit identity and any saved AirPlay password for this
+    /// receiver so the next connect re-runs pair-setup. Does not tear down a live
+    /// session — disconnect first when a clean re-pair is required.
     /// </summary>
-    /// <returns><c>true</c> when credentials were removed.</returns>
+    /// <returns><c>true</c> when credentials or a password were removed.</returns>
     public bool ForgetPairing(DeviceInfo receiver)
     {
         ArgumentNullException.ThrowIfNull(receiver);
-        return PairingForget.Forget(_pairingStore, ReceiverKey.For(receiver));
+        var receiverKey = ReceiverKey.For(receiver);
+        var clearedPairing = PairingForget.Forget(_pairingStore, receiverKey);
+        var hadPassword = _passwordStore.TryGet(receiverKey, out _);
+        if (hadPassword)
+        {
+            _passwordStore.Remove(receiverKey);
+            AppLog.Info("pair", $"Forgot stored AirPlay password for {receiverKey}");
+        }
+
+        return clearedPairing || hadPassword;
     }
 
     /// <summary>
@@ -204,7 +225,9 @@ public sealed class StreamingOrchestrator : IAsyncDisposable
                 ResetSignalWindowCounters();
             }
 
-            var session = CreateConfiguredSession(receiver, protocol);
+            var receiverPassword = await ResolveReceiverPasswordAsync(receiver, cancellationToken)
+                .ConfigureAwait(false);
+            var session = CreateConfiguredSession(receiver, protocol, receiverPassword);
             session.StateChanged += OnSessionStateChanged;
             var entry = new SessionEntry(receiver, session, protocol);
             lock (_sessionsGate)
@@ -215,6 +238,11 @@ public sealed class StreamingOrchestrator : IAsyncDisposable
             try
             {
                 await session.ConnectAsync(cancellationToken).ConfigureAwait(false);
+                if (!string.IsNullOrEmpty(receiverPassword))
+                {
+                    _passwordStore.Save(id, receiverPassword);
+                }
+
                 AppLog.Info(
                     "stream",
                     $"Connected receiver count={_sessions.Count} " +
@@ -222,8 +250,13 @@ public sealed class StreamingOrchestrator : IAsyncDisposable
                     $"setupMin={LatencyAutoController.SetupLatencyMin(_latency.EffectiveFrames)} " +
                     $"responsiveness={_responsiveness} fidelity={_fidelity}");
             }
-            catch
+            catch (Exception ex)
             {
+                if (ConnectionFailureCopy.IsWrongPassword(ex.Message))
+                {
+                    _passwordStore.Remove(id);
+                }
+
                 session.StateChanged -= OnSessionStateChanged;
                 lock (_sessionsGate)
                 {
@@ -788,7 +821,10 @@ public sealed class StreamingOrchestrator : IAsyncDisposable
                 retired,
                 () =>
                 {
-                    var replacement = CreateConfiguredSession(entry.Receiver, entry.Protocol);
+                    var replacement = CreateConfiguredSession(
+                        entry.Receiver,
+                        entry.Protocol,
+                        StoredReceiverPasswordOrNull(entry.Receiver));
                     replacement.StateChanged += OnSessionStateChanged;
                     lock (_sessionsGate)
                     {
@@ -817,10 +853,14 @@ public sealed class StreamingOrchestrator : IAsyncDisposable
     /// <summary>Builds a session already carrying the current shared latency.</summary>
     private IAirPlaySession CreateConfiguredSession(
         DeviceInfo receiver,
-        AirPlayProtocolKind protocol)
+        AirPlayProtocolKind protocol,
+        string? receiverPassword = null)
     {
         IAirPlaySession session = protocol == AirPlayProtocolKind.AirPlay2
-            ? new AirPlay2Session(receiver, _senderDeviceId, CreatePairingOptions(receiver))
+            ? new AirPlay2Session(
+                receiver,
+                _senderDeviceId,
+                CreatePairingOptions(receiver, receiverPassword))
             : new RaopSession(receiver);
         session.SetEffectiveLatencyFrames(_latency.EffectiveFrames);
         session.SetAudioFidelity(_fidelity);
@@ -831,13 +871,16 @@ public sealed class StreamingOrchestrator : IAsyncDisposable
     /// The orchestrator owns pairing persistence; the protocol only consumes the
     /// credentials and reports back which ones worked.
     /// </summary>
-    private PairingOptions CreatePairingOptions(DeviceInfo receiver)
+    private PairingOptions CreatePairingOptions(
+        DeviceInfo receiver,
+        string? receiverPassword = null)
     {
         var receiverKey = ReceiverKey.For(receiver);
+        var usePassword = !string.IsNullOrEmpty(receiverPassword);
         return PairingOptionsFactory.Create(
             _pairingStore,
             receiverKey,
-            _requestPairingPinAsync,
+            usePassword ? null : _requestPairingPinAsync,
             clearTransient: () =>
             {
                 lock (_sessionsGate)
@@ -857,8 +900,30 @@ public sealed class StreamingOrchestrator : IAsyncDisposable
                         live.UsesTransientPairing = true;
                     }
                 }
-            });
+            },
+            receiverPassword: receiverPassword);
     }
+
+    /// <summary>
+    /// Resolves the AirPlay Receiver password for a PasswordRequired device:
+    /// stored first, then the UI prompt. Never logs the value.
+    /// </summary>
+    private Task<string?> ResolveReceiverPasswordAsync(
+        DeviceInfo receiver,
+        CancellationToken cancellationToken) =>
+        ReceiverPasswordResolver.ResolveAsync(
+            _passwordStore,
+            ReceiverKey.For(receiver),
+            receiver.RequiresPassword,
+            _requestReceiverPasswordAsync,
+            cancellationToken);
+
+    /// <summary>Store-only lookup for rebuilds — never prompts mid-session.</summary>
+    private string? StoredReceiverPasswordOrNull(DeviceInfo receiver) =>
+        ReceiverPasswordResolver.StoredOrNull(
+            _passwordStore,
+            ReceiverKey.For(receiver),
+            receiver.RequiresPassword);
 
     private void EnsureHomogeneousWithExisting(AirPlayProtocolKind incoming)
     {

@@ -30,6 +30,7 @@ namespace WinStream.Core.Network
                     // _airplay, so AirPlay 2 detection needs both records merged.
                     var txt = MergeTxtRecords(host, FindAirPlayHost(host, airplayResults));
                     var features = FirstValue(txt, "features", "ft");
+                    var flags = FirstValue(txt, "flags", "sf");
 
                     return new DeviceInfo
                     {
@@ -45,7 +46,9 @@ namespace WinStream.Core.Network
                         PublicKey = FirstValue(txt, "pk"),
                         EncryptionTypes = FirstValue(txt, "et"),
                         FeaturesRaw = features,
-                        Features = AirPlayFeatures.Parse(features)
+                        Features = AirPlayFeatures.Parse(features),
+                        StatusFlagsRaw = flags,
+                        StatusFlags = AirPlayStatusFlags.Parse(flags)
                     };
                 }).ToList();
             }

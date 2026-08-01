@@ -9,25 +9,31 @@ public static class HkpPairSetupClient
     public static async Task<HkpTransient> PairAsync(
         string host,
         int port,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        string? srpSecret = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(host);
         using var client = new TcpClient();
         await client.ConnectAsync(host, port, cancellationToken).ConfigureAwait(false);
         await using var stream = client.GetStream();
-        return await PairAsync(stream, host, port, cancellationToken).ConfigureAwait(false);
+        return await PairAsync(stream, host, port, cancellationToken, srpSecret).ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// <paramref name="srpSecret"/> defaults to the fixed transient PIN. Receivers
+    /// with an AirPlay password expect that password here instead.
+    /// </summary>
     public static async Task<HkpTransient> PairAsync(
         Stream stream,
         string host,
         int port,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        string? srpSecret = null)
     {
         ArgumentNullException.ThrowIfNull(stream);
         ArgumentException.ThrowIfNullOrWhiteSpace(host);
 
-        var pairing = new HkpTransient();
+        var pairing = new HkpTransient(srpSecret);
         try
         {
             var m1 = HkpTransient.BuildM1();

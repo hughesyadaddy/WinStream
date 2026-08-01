@@ -3,7 +3,6 @@ using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text;
 using WinStream.Core.Logging;
-using WinStream.Core.Persistence;
 using WinStream.Core.Protocol.Raop;
 
 namespace WinStream.Core.Protocol.AirPlay2;
@@ -26,6 +25,7 @@ public sealed class EncryptedRtspClient : IAsyncDisposable
     private NetworkStream? _raw;
     private RtspCryptoStream? _crypto;
     private AirPlayControlKeys? _keys;
+    private string? _receiverPassword;
     private int _cSeq;
     private bool _disposed;
 
@@ -81,11 +81,12 @@ public sealed class EncryptedRtspClient : IAsyncDisposable
         PairingOptions? pairingOptions,
         CancellationToken cancellationToken)
     {
+        _receiverPassword = pairingOptions?.ReceiverPassword;
         var negotiator = new PairingKeyNegotiator(pairingOptions, ResetTcp);
         return negotiator.NegotiateAsync(
             VerifyAsync,
             SetupAsync,
-            TransientAsync,
+            token => TransientAsync(_receiverPassword, token),
             cancellationToken);
     }
 
@@ -136,14 +137,17 @@ public sealed class EncryptedRtspClient : IAsyncDisposable
         return credentials;
     }
 
-    private async Task<AirPlayControlKeys> TransientAsync(CancellationToken cancellationToken)
+    private async Task<AirPlayControlKeys> TransientAsync(
+        string? receiverPassword,
+        CancellationToken cancellationToken)
     {
         await EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
         using var transient = await HkpPairSetupClient.PairAsync(
                 _raw!,
                 _host,
                 _port,
-                cancellationToken)
+                cancellationToken,
+                receiverPassword)
             .ConfigureAwait(false);
         return new AirPlayControlKeys(
             transient.ControlWriteKey.ToArray(),
@@ -496,7 +500,18 @@ public sealed class EncryptedRtspClient : IAsyncDisposable
         {
             var request = BuildRequest(method, target, headers, body);
             await _crypto!.WritePlaintextAsync(request, cancellationToken).ConfigureAwait(false);
-            return await ReadResponseAsync(cancellationToken).ConfigureAwait(false);
+            var response = await ReadResponseAsync(cancellationToken).ConfigureAwait(false);
+            if (response.IsUnauthorized)
+            {
+                // A 401 here is a password gate, not a pairing problem. The realm
+                // and nonce are safe to log; the password itself never is.
+                AppLog.Warn(
+                    "rtsp",
+                    $"{method} refused with 401; havePassword={_receiverPassword is not null}; " +
+                    $"challenge={response.AuthenticationChallenge ?? "none"}");
+            }
+
+            return response;
         }
         finally
         {

@@ -30,5 +30,13 @@ namespace WinStream.Core.Network
 
         public long Features { get; set; }
         public string FeaturesRaw { get; set; }
+
+        /// <summary>AirPlay TXT <c>sf</c>/<c>flags</c> bitfield.</summary>
+        public long StatusFlags { get; set; }
+
+        public string StatusFlagsRaw { get; set; }
+
+        /// <summary>True when the receiver advertises an AirPlay password.</summary>
+        public bool RequiresPassword => AirPlayStatusFlags.RequiresPassword(StatusFlags);
     }
 }

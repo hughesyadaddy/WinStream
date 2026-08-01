@@ -118,7 +118,8 @@ public class HkpPersistentTests
                 return Pin(default);
             }));
 
-        Assert.Contains("wrong AirPlay code", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("authentication failed", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("password", ex.Message, StringComparison.OrdinalIgnoreCase);
         Assert.False(prompted);
     }
 

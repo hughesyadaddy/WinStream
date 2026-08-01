@@ -117,6 +117,32 @@ public class PairingOptionsWiringTests
     }
 
     [Fact]
+    public void A_password_path_skips_identity_and_pin_callbacks()
+    {
+        var store = new FakePairingCredentialStore();
+        store.Save("receiver-a", Complete());
+        Func<CancellationToken, Task<string?>> pin = _ => Task.FromResult<string?>("1234");
+        var sessions = new FakeSessionMap();
+        sessions.Add("receiver-a");
+
+        var options = PairingOptionsFactory.Create(
+            store,
+            "receiver-a",
+            pin,
+            clearTransient: () => sessions.ClearTransient("receiver-a"),
+            markTransient: () => sessions.MarkTransient("receiver-a"),
+            receiverPassword: "hunter2");
+
+        Assert.Equal("hunter2", options.ReceiverPassword);
+        Assert.Null(options.StoredCredentials);
+        Assert.Null(options.RequestPinAsync);
+        Assert.Null(options.OnPaired);
+        Assert.Null(options.OnStoredCredentialsRejected);
+        Assert.Null(options.OnTransientPairing);
+        Assert.False(sessions.UsesTransientPairing("receiver-a"));
+    }
+
+    [Fact]
     public void OnPaired_writes_through_to_the_store()
     {
         var store = new FakePairingCredentialStore();

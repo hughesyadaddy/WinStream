@@ -45,6 +45,28 @@ public class HkpTests
     }
 
     [Fact]
+    public void An_auth_failure_blames_the_code_or_password_not_just_a_number()
+    {
+        var message = HkpTransient.DescribeTlvError(0x02);
+
+        Assert.Contains("password", message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("code", message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("backoff", HkpTransient.DescribeTlvError(0x03), StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void A_password_receiver_can_replace_the_fixed_transient_pin()
+    {
+        // The SRP secret has to be swappable: a receiver with an AirPlay password
+        // rejects 3939 outright (pair-setup error 2).
+        using var withPassword = new HkpTransient("hunter2");
+        using var withDefault = new HkpTransient();
+
+        Assert.Throws<InvalidOperationException>(() => _ = withPassword.SessionKey);
+        Assert.Throws<InvalidOperationException>(() => _ = withDefault.SessionKey);
+    }
+
+    [Fact]
     public void Dispose_blocks_access_to_keys()
     {
         var pairing = new HkpTransient();

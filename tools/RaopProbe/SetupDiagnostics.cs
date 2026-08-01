@@ -12,10 +12,18 @@ namespace WinStream.Tools.RaopProbe;
 /// </summary>
 public static class SetupDiagnostics
 {
-    public static async Task<int> RunAsync(DeviceInfo target, CancellationToken cancellationToken = default)
+    public static async Task<int> RunAsync(
+        DeviceInfo target,
+        string? receiverPassword = null,
+        CancellationToken cancellationToken = default)
     {
         var localIp = ResolveLocalAddress(target.IPAddress);
         Console.WriteLine($"local address toward receiver: {localIp}");
+        Console.WriteLine($"receiver password supplied: {!string.IsNullOrEmpty(receiverPassword)}");
+
+        var pairingOptions = string.IsNullOrEmpty(receiverPassword)
+            ? null
+            : new PairingOptions { ReceiverPassword = receiverPassword };
 
         foreach (var variant in BuildVariants(localIp))
         {
@@ -23,7 +31,7 @@ public static class SetupDiagnostics
             try
             {
                 await using var control = new EncryptedRtspClient(target.IPAddress, target.Port);
-                await control.ConnectAndPairAsync(cancellationToken: cancellationToken);
+                await control.ConnectAndPairAsync(pairingOptions, cancellationToken);
                 Console.WriteLine("  paired");
 
                 var info = await control.SendAsync(

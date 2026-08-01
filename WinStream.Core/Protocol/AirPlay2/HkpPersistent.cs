@@ -10,7 +10,6 @@ using Org.BouncyCastle.Math;
 using Org.BouncyCastle.Security;
 using Org.BouncyCastle.Utilities;
 using WinStream.Core.Logging;
-using WinStream.Core.Persistence;
 
 namespace WinStream.Core.Protocol.AirPlay2;
 
@@ -357,18 +356,8 @@ public static class HkpPersistent
             return;
         }
 
-        var reason = error[0] switch
-        {
-            0x01 => "unknown",
-            0x02 => "authentication failed (wrong AirPlay code)",
-            0x03 => "backoff — too many attempts",
-            0x04 => "max peers",
-            0x05 => "max tries",
-            0x06 => "unavailable",
-            0x07 => "busy",
-            _ => $"code {error[0]}"
-        };
-        throw new InvalidOperationException($"{step} error: {reason}.");
+        throw new InvalidOperationException(
+            $"{step} error: {HkpTransient.DescribeTlvError(error[0])}.");
     }
 
     private static byte[] HapClientProof(

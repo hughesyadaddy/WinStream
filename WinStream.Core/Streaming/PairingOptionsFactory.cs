@@ -15,7 +15,8 @@ public static class PairingOptionsFactory
         string receiverKey,
         Func<CancellationToken, Task<string?>>? requestPinAsync = null,
         Action? clearTransient = null,
-        Action? markTransient = null)
+        Action? markTransient = null,
+        string? receiverPassword = null)
     {
         ArgumentNullException.ThrowIfNull(store);
         ArgumentException.ThrowIfNullOrWhiteSpace(receiverKey);
@@ -24,6 +25,13 @@ public static class PairingOptionsFactory
         // rebuild that reuses a SessionEntry: a previous temporary pairing must not keep
         // claiming Accept-every-time after a successful pair-verify.
         clearTransient?.Invoke();
+
+        // Password-protected receivers must use the password as the transient SRP
+        // secret. Persistent pair-verify then SETUP 401s; skip identity/PIN paths.
+        if (!string.IsNullOrEmpty(receiverPassword))
+        {
+            return new PairingOptions { ReceiverPassword = receiverPassword };
+        }
 
         return new PairingOptions
         {

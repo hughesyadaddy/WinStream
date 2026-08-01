@@ -8,21 +8,33 @@ namespace WinStream.Core.Streaming;
 public static class PairingCopy
 {
     /// <summary>
-    /// Shown when a receiver asks for the persistent-pairing secret. Covers both forms
-    /// the same SRP exchange accepts: the on-screen code, or the AirPlay Receiver
-    /// password when one is configured.
+    /// Shown when a receiver asks for the on-screen AirPlay code during persistent
+    /// pairing. Password-protected receivers use <see cref="PasswordPromptBody"/> instead.
     /// </summary>
     public const string PromptBody =
         "Look at the Mac for a 4-digit AirPlay code and type it here. " +
         "That trusts this PC so later connects can skip Accept.\n\n" +
-        "If you set a password under System Settings → General → AirDrop & Handoff → " +
-        "AirPlay Receiver, enter that password instead.\n\n" +
         "If nothing appears, click Skip (approve every time) — the receiver will keep " +
         "asking you to approve each session.";
 
     public const string TrustButton = "Trust this PC";
 
     public const string SkipButton = "Skip (approve every time)";
+
+    public const string PasswordPromptTitle = "Enter AirPlay password";
+
+    /// <summary>
+    /// Shown when mDNS advertises PasswordRequired. This is the System Settings
+    /// AirPlay Receiver password, not the on-screen code.
+    /// </summary>
+    public const string PasswordPromptBody =
+        "This Mac has an AirPlay password under System Settings → General → " +
+        "AirDrop & Handoff → AirPlay Receiver. Enter that password to connect.\n\n" +
+        "WinStream stores it encrypted on this PC so you are not asked every time.";
+
+    public const string PasswordButton = "Connect";
+
+    public const string PasswordCancelButton = "Cancel";
 
     public const string TransientTitle = "Approve needed on every connect";
 

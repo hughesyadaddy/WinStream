@@ -23,7 +23,8 @@ public sealed class HkpTransient : IDisposable
     public const uint TransientFlags = 0x00000010;
 
     private static readonly byte[] IdentityBytes = Encoding.UTF8.GetBytes(IdentityName);
-    private static readonly byte[] PinBytes = Encoding.UTF8.GetBytes(TransientPin);
+
+    private readonly byte[] _srpSecretBytes;
 
     private byte[]? _sessionKey;
     private byte[]? _controlWriteKey;
@@ -31,6 +32,14 @@ public sealed class HkpTransient : IDisposable
     private byte[]? _eventsWriteKey;
     private byte[]? _eventsReadKey;
     private bool _disposed;
+
+    /// <summary>
+    /// A receiver with an AirPlay password expects that password as the SRP
+    /// secret; <see cref="TransientPin"/> only works when no password is set.
+    /// </summary>
+    public HkpTransient(string? srpSecret = null) =>
+        _srpSecretBytes = Encoding.UTF8.GetBytes(
+            string.IsNullOrEmpty(srpSecret) ? TransientPin : srpSecret);
 
     public IReadOnlyList<byte> SessionKey
     {
@@ -127,7 +136,7 @@ public sealed class HkpTransient : IDisposable
         var client = new Srp6Client();
         client.Init(group, digest, new SecureRandom());
 
-        var A = client.GenerateClientCredentials(salt, IdentityBytes, PinBytes);
+        var A = client.GenerateClientCredentials(salt, IdentityBytes, _srpSecretBytes);
         var B = new BigInteger(1, serverPublic);
         var S = client.CalculateSecret(B);
 
@@ -240,6 +249,8 @@ public sealed class HkpTransient : IDisposable
             CryptographicOperations.ZeroMemory(_pendingM1);
         }
 
+        CryptographicOperations.ZeroMemory(_srpSecretBytes);
+
         _sessionKey = null;
         _controlWriteKey = null;
         _controlReadKey = null;
@@ -262,6 +273,23 @@ public sealed class HkpTransient : IDisposable
             _ => $"Pairing HTTP status {status}."
         };
 
+    /// <summary>
+    /// HAP pair-setup error codes. Shared with <see cref="HkpPersistent"/> so both
+    /// pairing paths name the same cause the same way.
+    /// </summary>
+    public static string DescribeTlvError(byte code) =>
+        code switch
+        {
+            0x01 => "unknown",
+            0x02 => "authentication failed — the receiver rejected the AirPlay code or password",
+            0x03 => "backoff — too many attempts",
+            0x04 => "max peers",
+            0x05 => "max tries",
+            0x06 => "unavailable",
+            0x07 => "busy",
+            _ => $"code {code}"
+        };
+
     private static void ThrowIfError(IReadOnlyDictionary<byte, byte[]> map)
     {
         if (!map.TryGetValue(Tlv8.Error, out var error) || error.Length == 0)
@@ -269,7 +297,7 @@ public sealed class HkpTransient : IDisposable
             return;
         }
 
-        throw new InvalidOperationException($"Pair-setup error TLV code {error[0]}.");
+        throw new InvalidOperationException($"Pair-setup error: {DescribeTlvError(error[0])}.");
     }
 
     private static byte[] HapClientProof(

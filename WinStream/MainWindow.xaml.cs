@@ -79,6 +79,11 @@ namespace WinStream
                 var pin = await PromptForAirPlayPinAsync(ct);
                 return string.IsNullOrWhiteSpace(pin) ? null : pin;
             });
+            _streamingOrchestrator.SetReceiverPasswordPrompt(async ct =>
+            {
+                var password = await PromptForAirPlayPasswordAsync(ct);
+                return string.IsNullOrWhiteSpace(password) ? null : password;
+            });
             var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
             var windowId = Win32Interop.GetWindowIdFromWindow(hwnd);
             _appWindow = AppWindow.GetFromWindowId(windowId);
@@ -1164,14 +1169,11 @@ namespace WinStream
                             return;
                         }
 
-                        // The receiver shows a 4-digit code, but a Mac with an AirPlay
-                        // Receiver password expects that password instead — both are the
-                        // same SRP secret, so the field must not be digits-only.
                         var pinBox = new TextBox
                         {
-                            PlaceholderText = "AirPlay code or password"
+                            PlaceholderText = "4-digit AirPlay code"
                         };
-                        AutomationProperties.SetName(pinBox, "AirPlay pairing code or password");
+                        AutomationProperties.SetName(pinBox, "AirPlay pairing code");
 
                         var dialog = new ContentDialog
                         {
@@ -1209,6 +1211,78 @@ namespace WinStream
                         }
 
                         tcs.TrySetResult(pinBox.Text?.Trim() ?? string.Empty);
+                    }
+                    catch (Exception ex)
+                    {
+                        tcs.TrySetException(ex);
+                    }
+                }))
+            {
+                tcs.TrySetResult(string.Empty);
+            }
+
+            return tcs.Task;
+        }
+
+        /// <summary>
+        /// Collects the System Settings AirPlay Receiver password when mDNS
+        /// advertises PasswordRequired and nothing is stored yet.
+        /// </summary>
+        private Task<string> PromptForAirPlayPasswordAsync(CancellationToken cancellationToken)
+        {
+            var tcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+            if (!DispatcherQueue.TryEnqueue(async () =>
+                {
+                    try
+                    {
+                        if (cancellationToken.IsCancellationRequested)
+                        {
+                            tcs.TrySetResult(string.Empty);
+                            return;
+                        }
+
+                        var passwordBox = new PasswordBox
+                        {
+                            PlaceholderText = "AirPlay password"
+                        };
+                        AutomationProperties.SetName(passwordBox, "AirPlay Receiver password");
+
+                        var dialog = new ContentDialog
+                        {
+                            Title = PairingCopy.PasswordPromptTitle,
+                            Content = new StackPanel
+                            {
+                                Spacing = 12,
+                                Children =
+                                {
+                                    new TextBlock
+                                    {
+                                        Text = PairingCopy.PasswordPromptBody,
+                                        TextWrapping = TextWrapping.WrapWholeWords
+                                    },
+                                    passwordBox
+                                }
+                            },
+                            PrimaryButtonText = PairingCopy.PasswordButton,
+                            CloseButtonText = PairingCopy.PasswordCancelButton,
+                            DefaultButton = ContentDialogButton.Primary,
+                            XamlRoot = Content.XamlRoot
+                        };
+
+                        using var reg = cancellationToken.Register(() =>
+                        {
+                            dialog.Hide();
+                            tcs.TrySetResult(string.Empty);
+                        });
+
+                        var result = await dialog.ShowAsync();
+                        if (result != ContentDialogResult.Primary)
+                        {
+                            tcs.TrySetResult(string.Empty);
+                            return;
+                        }
+
+                        tcs.TrySetResult(passwordBox.Password ?? string.Empty);
                     }
                     catch (Exception ex)
                     {
@@ -1676,8 +1750,11 @@ namespace WinStream
                 }
 
                 device.SetStatus(
-                    isAutomatic ? "Automatic connection failed. Retrying later." : "Couldn't connect.",
-                    DeviceStatusKind.Error);
+                    isAutomatic
+                        ? "Automatic connection failed. Retrying later."
+                        : ConnectionFailureCopy.DeviceRow(ex),
+                    DeviceStatusKind.Error,
+                    ConnectionFailureCopy.Detail(ex));
                 if (!isAutomatic)
                 {
                     // Tray-initiated connects can fail while the window is hidden.
@@ -1689,7 +1766,7 @@ namespace WinStream
                     ShowMessage(
                         InfoBarSeverity.Error,
                         $"Couldn't connect to {device.DisplayName}",
-                        FormatConnectionFailure(ex.Message));
+                        ConnectionFailureCopy.Detail(ex));
 
                     if (_settings.Settings.PlaybackResponsiveness == PlaybackResponsiveness.LabPacket)
                     {
@@ -2153,38 +2230,15 @@ namespace WinStream
                    $"Address: {Fallback(device.IPAddress)}:{device.Port}\n" +
                    $"Protocol: {protocol}\n" +
                    $"Encryption: {Fallback(device.EncryptionTypes)}\n" +
+                   $"AirPlay password: {(device.RequiresPassword ? "Required" : "No")}\n" +
                    $"Saved pairing: {(hasStoredPairing ? "Yes" : "No")}";
         }
 
         private static string Fallback(string value) =>
             string.IsNullOrWhiteSpace(value) ? "Unknown" : value;
 
-        private static string FormatConnectionFailure(string message)
-        {
-            if (string.IsNullOrWhiteSpace(message))
-            {
-                return "Unknown error.";
-            }
-
-            if (message.Contains("Everyone", StringComparison.OrdinalIgnoreCase) ||
-                message.Contains("same network", StringComparison.OrdinalIgnoreCase))
-            {
-                return message;
-            }
-
-            if (message.Contains("470", StringComparison.Ordinal) ||
-                message.Contains("403", StringComparison.Ordinal) ||
-                message.Contains("Pairing", StringComparison.OrdinalIgnoreCase) ||
-                message.Contains("pair-setup", StringComparison.OrdinalIgnoreCase))
-            {
-                return message +
-                    " On a Mac, open System Settings > General > AirDrop & Handoff, set " +
-                    "AirPlay Receiver to \"Everyone\" or \"Anyone on the same network\", " +
-                    "and turn off the required password.";
-            }
-
-            return message;
-        }
+        private static string FormatConnectionFailure(string message) =>
+            ConnectionFailureCopy.Detail(message);
 
         private void UpdateUI(bool isEnabled)
         {

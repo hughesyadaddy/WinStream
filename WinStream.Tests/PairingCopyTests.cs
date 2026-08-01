@@ -9,10 +9,21 @@ namespace WinStream.Tests;
 public class PairingCopyTests
 {
     [Fact]
-    public void The_prompt_names_both_secrets_the_receiver_may_ask_for()
+    public void The_code_prompt_names_the_code_and_not_the_password()
     {
         Assert.Contains("AirPlay code", PairingCopy.PromptBody);
-        Assert.Contains("password", PairingCopy.PromptBody);
+        Assert.DoesNotContain("password", PairingCopy.PromptBody, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void The_password_prompt_names_system_settings_and_storage()
+    {
+        Assert.Equal("Enter AirPlay password", PairingCopy.PasswordPromptTitle);
+        Assert.Contains("password", PairingCopy.PasswordPromptBody, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("System Settings", PairingCopy.PasswordPromptBody, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("encrypted", PairingCopy.PasswordPromptBody, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("Connect", PairingCopy.PasswordButton);
+        Assert.Equal("Cancel", PairingCopy.PasswordCancelButton);
     }
 
     [Fact]

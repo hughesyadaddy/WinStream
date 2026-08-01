@@ -74,6 +74,40 @@ static string? Prompt(string label)
     return Console.ReadLine();
 }
 
+// Masked so a receiver password never lands in the console scrollback that gets
+// pasted into bug reports.
+static string? PromptSecret(string label)
+{
+    Console.Write(label);
+    var typed = new System.Text.StringBuilder();
+    while (true)
+    {
+        var key = Console.ReadKey(intercept: true);
+        if (key.Key == ConsoleKey.Enter)
+        {
+            Console.WriteLine();
+            return typed.Length == 0 ? null : typed.ToString();
+        }
+
+        if (key.Key == ConsoleKey.Backspace)
+        {
+            if (typed.Length > 0)
+            {
+                typed.Length--;
+                Console.Write("\b \b");
+            }
+
+            continue;
+        }
+
+        if (!char.IsControl(key.KeyChar))
+        {
+            typed.Append(key.KeyChar);
+            Console.Write('*');
+        }
+    }
+}
+
 Console.WriteLine("== Discovering _raop._tcp receivers ==");
 using var discoveryCts = new CancellationTokenSource(TimeSpan.FromSeconds(12));
 var devices = await DeviceDiscovery.DiscoverDevicesAsync(discoveryCts.Token);
@@ -166,7 +200,12 @@ if (args.Contains("--pair"))
 
 if (args.Contains("--setup-diag"))
 {
-    return await WinStream.Tools.RaopProbe.SetupDiagnostics.RunAsync(target);
+    // Prefer --prompt-password so the secret never lands in shell history.
+    var receiverPassword = ParseString(args, "--password")
+        ?? (args.Contains("--prompt-password")
+            ? PromptSecret("AirPlay Receiver password: ")
+            : null);
+    return await WinStream.Tools.RaopProbe.SetupDiagnostics.RunAsync(target, receiverPassword);
 }
 
 if (args.Contains("--setup"))

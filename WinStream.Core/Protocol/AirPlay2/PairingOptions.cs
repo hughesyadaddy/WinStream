@@ -16,6 +16,12 @@ public sealed class PairingOptions
     /// </summary>
     public Func<CancellationToken, Task<string?>>? RequestPinAsync { get; init; }
 
+    /// <summary>
+    /// AirPlay Receiver password used as the SRP secret for transient pairing on
+    /// password-protected receivers. The fixed transient PIN fails without it.
+    /// </summary>
+    public string? ReceiverPassword { get; init; }
+
     /// <summary>Invoked with a fresh identity so the caller can persist it.</summary>
     public Action<PairingCredentials>? OnPaired { get; init; }
 
