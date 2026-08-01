@@ -1696,7 +1696,7 @@ namespace WinStream
             }
 
             _connectionInFlight = true;
-            messageBar.IsOpen = false;
+            SetTopInfoBarOpen(messageBar, isOpen: false);
             device.ClearStatus();
             if (connect && isAutomatic)
             {
@@ -2001,11 +2001,11 @@ namespace WinStream
         {
             if (_settings.Settings.AirPlayReceiverHintDismissed)
             {
-                macHintBar.IsOpen = false;
+                SetTopInfoBarOpen(macHintBar, isOpen: false);
                 return;
             }
 
-            macHintBar.IsOpen = _allDevices.Count > 0;
+            SetTopInfoBarOpen(macHintBar, _allDevices.Count > 0);
         }
 
         private void MacHintBar_CloseButtonClick(InfoBar sender, object args)
@@ -2144,8 +2144,24 @@ namespace WinStream
             messageBar.Severity = severity;
             messageBar.Title = title;
             messageBar.Message = message;
-            messageBar.IsOpen = true;
+            SetTopInfoBarOpen(messageBar, isOpen: true);
         }
+
+        private static void SetTopInfoBarOpen(InfoBar infoBar, bool isOpen)
+        {
+            if (isOpen)
+            {
+                infoBar.Visibility = Visibility.Visible;
+                infoBar.IsOpen = true;
+                return;
+            }
+
+            infoBar.IsOpen = false;
+            infoBar.Visibility = Visibility.Collapsed;
+        }
+
+        private void TopInfoBar_Closed(InfoBar sender, InfoBarClosedEventArgs args) =>
+            sender.Visibility = Visibility.Collapsed;
 
         private async void InfoButton_Click(object sender, RoutedEventArgs e)
         {

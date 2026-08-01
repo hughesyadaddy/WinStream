@@ -81,16 +81,20 @@
 
                 <InfoBar x:Name="messageBar"
                          IsOpen="False"
+                         Visibility="Collapsed"
                          IsClosable="True"
-                         Severity="Error"/>
+                         Severity="Error"
+                         Closed="TopInfoBar_Closed"/>
 
                 <InfoBar x:Name="macHintBar"
                          IsOpen="False"
+                         Visibility="Collapsed"
                          IsClosable="True"
                          Severity="Informational"
                          Title="Streaming to a Mac?"
                          Message="On the Mac, set AirPlay Receiver to Everyone (or anyone on the same network) and turn off the required password. The first connect asks for the AirPlay code once so later sessions can skip Accept."
-                         CloseButtonClick="MacHintBar_CloseButtonClick"/>
+                         CloseButtonClick="MacHintBar_CloseButtonClick"
+                         Closed="TopInfoBar_Closed"/>
 
                 <!-- Step 1: what to send -->
                 <Border Style="{StaticResource CardBorderStyle}">
