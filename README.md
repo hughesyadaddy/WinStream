@@ -112,8 +112,44 @@ The 8–10 ms average target is **not** validated: it requires the test-signed v
 
 ## Status
 
-Code for the Store MVP pipeline (loopback + classic RAOP single/multi-room + packaging docs) is on branch `feat/winstream-full-product`. Manual device-matrix validation and Store Partner Center submission are still required before calling a build Store-ready. AirPlay 2 streaming and the virtual driver remain gated / optional stretch work.
+This branch (`feat/winstream-full-product`) is a **full-product integration** PR against [`bananz0/WinStream`](https://github.com/bananz0/WinStream) `master`. It turns the original RAOP discovery prototype into a tray-first Windows sender with classic multi-room AirPlay, an experimental AirPlay 2 path, optional virtual-driver work, and signed sideload packaging.
 
-## LicenseD
+### What this PR delivers
+
+| Area | Delivered |
+| --- | --- |
+| **Application shell** | Single-instance WinUI 3 tray app, settings persistence, branded MSIX packaging |
+| **Capture** | WASAPI loopback with endpoint picker and level meter; optional event-driven capture for low-latency presets |
+| **Classic RAOP** | RTSP, ALAC, AES, RTP, sync/timing, volume, multi-room fan-out with Degraded / Reconnecting states |
+| **AirPlay 2 (gated)** | HKP pairing, encrypted RTSP, RECORD / ALAC RTP, PTP slave, prefer-AP2 routing when capable |
+| **Pairing & passwords** | Persistent pairing store, AirPlay Receiver password prompts, RTSP Digest auth, keyed single-flight dialogs |
+| **Discovery** | mDNS merge/retention so streaming receivers and password badges stay stable across passes |
+| **Latency control** | **Auto** starts near ~50 ms and adjusts up/down under delivery pressure; **Extreme** is raise-only through a short ladder |
+| **Live quality UI** | Exact buffer + measured send rate in the status pill; detailed metrics flyout while streaming |
+| **Send path** | Absolute packet pacing, shared MMCSS Pro Audio elevation, pressure-window auto-latency |
+| **Auto-connect** | Remember and reconnect the last receiver; honest failure copy for auth and network errors |
+| **WinStream Link (off by default)** | Companion receiver tools (`tools/LinkRx`, `tools/LinkRx.Pi`); mutually exclusive with AirPlay output |
+| **Virtual driver scaffold** | Non-Store driver source, installer UI, and release docs under `drivers/winstream-vad/` |
+| **Local release install** | `scripts/build-and-install-release.ps1` — self-signed MSIX, cert trust, Start Menu install |
+| **Tests** | **695** xUnit tests covering protocol, pacing, pairing, discovery, and UI copy helpers |
+
+### Still pending (not blocking merge review)
+
+| Item | Notes |
+| --- | --- |
+| **Device-matrix sign-off** | Manual validation on real Mac / HomePod / third-party RAOP targets ([device matrix checklist](docs/testing/device-matrix.md)) |
+| **Microsoft Store submission** | Partner Center publisher identity and production signing — separate from local sideload cert |
+| **AirPlay 2 production gate** | AP2 media path remains experimental until broader hardware soak passes |
+| **Virtual audio driver release** | Test-signed / attestation build, WHQL or equivalent, GitHub Releases pipeline for `.sys` + installer |
+| **WinStream Link SLA claim** | 8–10 ms UI claim requires wired-lab measurement with the virtual driver ([measurement gate](docs/testing/link-e2e-measurement.md)) |
+| **Sub-50 ms end-to-end proof** | Virtual-driver capture path and Extreme/Auto tuning need sustained soak on target hardware |
+
+### Branch hygiene
+
+- Working plans, research, and code-review reports live under local `docs/` (gitignored).
+- Secrets stay in `.env` + `WINSTREAM_SECRETS_DIR` — never committed.
+- Test fixtures use fictional RFC 5737 addresses and device IDs only.
+
+## License
 
 [LICENSE.txt](LICENSE.txt) (Unlicense).
