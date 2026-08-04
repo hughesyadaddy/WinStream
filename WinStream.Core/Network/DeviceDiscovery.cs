@@ -32,6 +32,15 @@ namespace WinStream.Core.Network
                     var features = FirstValue(txt, "features", "ft");
                     var flags = FirstValue(txt, "flags", "sf");
 
+                    // deviceid lives on _airplay only. When that record is missing for a
+                    // pass, the _raop instance name (MAC@name) carries the same identity,
+                    // which keeps one receiver from being listed twice.
+                    var deviceId = FirstValue(txt, "deviceid");
+                    if (string.IsNullOrWhiteSpace(deviceId))
+                    {
+                        deviceId = RaopInstanceName.DeviceIdOrEmpty(host.DisplayName);
+                    }
+
                     return new DeviceInfo
                     {
                         DisplayName = ExtractDeviceName(host, airplayResults),
@@ -39,7 +48,7 @@ namespace WinStream.Core.Network
                         Port = host.Services.FirstOrDefault().Value.Port,
                         Manufacturer = FirstValue(txt, "manufacturer"),
                         Model = FirstValue(txt, "model", "am"),
-                        DeviceID = FirstValue(txt, "deviceid"),
+                        DeviceID = deviceId,
                         ProtocolVersion = FirstValue(txt, "protovers"),
                         AirPlayVersion = FirstValue(txt, "srcvers", "vs"),
                         PublicCUAirPlayPairingIdentity = FirstValue(txt, "pi"),
@@ -113,20 +122,9 @@ namespace WinStream.Core.Network
             }
 
             // Some receivers publish the two services on different interfaces.
-            var raopName = StripMacPrefix(raopHost.DisplayName);
+            var raopName = RaopInstanceName.NameAfterAtOrSelf(raopHost.DisplayName);
             return airplayResults.FirstOrDefault(h =>
-                string.Equals(StripMacPrefix(h.DisplayName), raopName, StringComparison.OrdinalIgnoreCase));
-        }
-
-        private static string StripMacPrefix(string displayName)
-        {
-            if (string.IsNullOrEmpty(displayName))
-            {
-                return string.Empty;
-            }
-
-            var separator = displayName.IndexOf('@');
-            return separator >= 0 ? displayName.Substring(separator + 1) : displayName;
+                string.Equals(RaopInstanceName.NameAfterAtOrSelf(h.DisplayName), raopName, StringComparison.OrdinalIgnoreCase));
         }
 
         private static string ExtractDeviceName(IZeroconfHost raopHost, IReadOnlyList<IZeroconfHost> airplayResults)

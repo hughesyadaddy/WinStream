@@ -28,7 +28,7 @@ public static class StreamingQualityCopy
 
     public static string ResponsivenessInfoBody =>
         "This setting changes playback delay, not sound fidelity. Lower delay = less buffer against Wi‑Fi glitches.\n\n" +
-        "• Auto — Starts near ~250 ms and may climb toward ~2 s if delivery pressure is detected.\n" +
+        "• Auto — Starts at ~50 ms and adjusts up or down automatically (toward ~2 s under sustained pressure, back down when delivery is clean).\n" +
         "• Extreme (~50 ms) — Asks ~50 ms of speaker buffer; may climb to ~80 ms then ~250 ms under " +
         "pressure (TuneBlade-style). Capture is still ~50 ms loopback. One speaker. " +
         "Speaker buffer ask only — not a measured PC-to-speaker delay.\n" +

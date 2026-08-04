@@ -1,6 +1,6 @@
-using WinStream.Core.Protocol.Raop;
+using WinStream.Core.Audio;
 
-namespace WinStream.Core.Streaming;
+namespace WinStream.Core.Audio;
 
 /// <summary>
 /// Absolute send timeline for RTP audio. Deadlines derive from the cumulative
@@ -23,19 +23,20 @@ public sealed class PacketSendScheduler
     private const int TargetSampleRate = 44100;
 
     private static readonly long MaxLatenessTicks =
-        MaxCatchUpPackets * TimeSpan.TicksPerSecond * AlacEncoder.FramesPerPacket /
+        MaxCatchUpPackets * TimeSpan.TicksPerSecond * AudioPacingConstants.PacketFrames /
         TargetSampleRate;
 
     private long _anchorTicks;
     private long _framesSinceAnchor;
     private bool _anchored;
+    private long _catchUpClampCount;
 
     /// <summary>Ticks of audio one packet represents; the pacing quantum.</summary>
     public static long PacketPeriodTicks { get; } =
-        TimeSpan.TicksPerSecond * AlacEncoder.FramesPerPacket / TargetSampleRate;
+        TimeSpan.TicksPerSecond * AudioPacingConstants.PacketFrames / TargetSampleRate;
 
     /// <summary>How many times the timeline has been re-anchored after falling behind.</summary>
-    public long CatchUpClampCount { get; private set; }
+    public long CatchUpClampCount => Interlocked.Read(ref _catchUpClampCount);
 
     public void Reset(long nowTicks)
     {
@@ -66,7 +67,7 @@ public sealed class PacketSendScheduler
         if (waitTicks < -MaxLatenessTicks)
         {
             Reset(nowTicks);
-            CatchUpClampCount++;
+            Interlocked.Increment(ref _catchUpClampCount);
             waitTicks = 0;
         }
 

@@ -3,6 +3,7 @@ using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text;
 using WinStream.Core.Logging;
+using WinStream.Core.Persistence;
 using WinStream.Core.Protocol.Raop;
 
 namespace WinStream.Core.Protocol.AirPlay2;
@@ -26,6 +27,9 @@ public sealed class EncryptedRtspClient : IAsyncDisposable
     private RtspCryptoStream? _crypto;
     private AirPlayControlKeys? _keys;
     private string? _receiverPassword;
+    private string? _digestRealm;
+    private string? _digestNonce;
+    private string? _digestUsername;
     private int _cSeq;
     private bool _disposed;
 
@@ -107,20 +111,26 @@ public sealed class EncryptedRtspClient : IAsyncDisposable
         Func<CancellationToken, Task<string?>> requestPinAsync,
         CancellationToken cancellationToken)
     {
-        try
+        // A password receiver authenticates pair-setup with that password, so asking
+        // it to display a code is pointless — macOS answers /pair-pin-start with 403.
+        var usePassword = _receiverPassword is not null;
+        if (!usePassword)
         {
-            using var pinClient = new TcpClient();
-            await pinClient.ConnectAsync(_host, _port, cancellationToken).ConfigureAwait(false);
-            await using var pinStream = pinClient.GetStream();
-            await HkpPersistent.RequestPinDisplayAsync(pinStream, _host, _port, cancellationToken)
-                .ConfigureAwait(false);
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            // Still attempt pair-setup — some receivers show a code on M1 alone.
-            AppLog.Warn(
-                "pair",
-                $"pair-pin-start failed; continuing pair-setup: {ex.GetType().Name}: {ex.Message}");
+            try
+            {
+                using var pinClient = new TcpClient();
+                await pinClient.ConnectAsync(_host, _port, cancellationToken).ConfigureAwait(false);
+                await using var pinStream = pinClient.GetStream();
+                await HkpPersistent.RequestPinDisplayAsync(pinStream, _host, _port, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                // Still attempt pair-setup — some receivers show a code on M1 alone.
+                AppLog.Warn(
+                    "pair",
+                    $"pair-pin-start failed; continuing pair-setup: {ex.GetType().Name}: {ex.Message}");
+            }
         }
 
         using var setupClient = new TcpClient();
@@ -131,7 +141,8 @@ public sealed class EncryptedRtspClient : IAsyncDisposable
                 _host,
                 _port,
                 requestPinAsync,
-                cancellationToken)
+                cancellationToken,
+                usePassword ? "AirPlay password" : "AirPlay code")
             .ConfigureAwait(false);
         ResetTcp();
         return credentials;
@@ -184,6 +195,9 @@ public sealed class EncryptedRtspClient : IAsyncDisposable
         }
 
         _raw = null;
+        _digestRealm = null;
+        _digestNonce = null;
+        _digestUsername = null;
         try
         {
             _tcp.Dispose();
@@ -501,17 +515,55 @@ public sealed class EncryptedRtspClient : IAsyncDisposable
             var request = BuildRequest(method, target, headers, body);
             await _crypto!.WritePlaintextAsync(request, cancellationToken).ConfigureAwait(false);
             var response = await ReadResponseAsync(cancellationToken).ConfigureAwait(false);
-            if (response.IsUnauthorized)
+            if (!response.IsUnauthorized)
             {
-                // A 401 here is a password gate, not a pairing problem. The realm
-                // and nonce are safe to log; the password itself never is.
-                AppLog.Warn(
-                    "rtsp",
-                    $"{method} refused with 401; havePassword={_receiverPassword is not null}; " +
-                    $"challenge={response.AuthenticationChallenge ?? "none"}");
+                return response;
             }
 
-            return response;
+            // Persistent pair-verify alone is not enough when the Mac has an
+            // AirPlay password: SETUP returns Digest 401 until we answer it. A
+            // later 401 on a sticky-authenticated session means the receiver
+            // rotated its nonce — retry with the fresh challenge rather than
+            // giving up, or RECORD/stream SETUP would fail permanently after a
+            // successful SETUP.
+            var plan = RtspDigestRetryPlan.NextAttempt(
+                response.AuthenticationChallenge,
+                method,
+                target,
+                _receiverPassword,
+                headers?.ContainsKey("Authorization") == true);
+            AppLog.Warn(
+                "rtsp",
+                $"{method} refused with 401; havePassword={_receiverPassword is not null}; " +
+                $"retrying={plan is not null}; " +
+                $"challenge={response.AuthenticationChallenge ?? "none"}");
+            if (plan is not { } attempt)
+            {
+                return response;
+            }
+
+            _digestRealm = attempt.Realm;
+            _digestNonce = attempt.Nonce;
+            _digestUsername = attempt.Username;
+            var retryHeaders = headers is null
+                ? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                : new Dictionary<string, string>(headers, StringComparer.OrdinalIgnoreCase);
+            retryHeaders["Authorization"] = attempt.Authorization;
+            var retry = BuildRequest(method, target, retryHeaders, body);
+            await _crypto.WritePlaintextAsync(retry, cancellationToken).ConfigureAwait(false);
+            var authenticated = await ReadResponseAsync(cancellationToken).ConfigureAwait(false);
+            if (!authenticated.IsUnauthorized)
+            {
+                return authenticated;
+            }
+
+            // The receiver rejected our Digest response to the password we were
+            // given — do not keep sending it, and let the caller clear it.
+            _digestRealm = null;
+            _digestNonce = null;
+            _digestUsername = null;
+            throw new AirPlayPasswordRejectedException(
+                $"{method} rejected the AirPlay password (RTSP 401 after Digest response).");
         }
         finally
         {
@@ -579,6 +631,25 @@ public sealed class EncryptedRtspClient : IAsyncDisposable
             }
         }
 
+        // After a Digest challenge succeeds, OwnTone keeps attaching Authorization
+        // to later RTSP on the same session (RECORD, stream SETUP, feedback),
+        // recomputed per method/uri from the stored realm and nonce.
+        if (_digestRealm is not null &&
+            _digestNonce is not null &&
+            _receiverPassword is not null &&
+            (headers is null || !headers.ContainsKey("Authorization")))
+        {
+            builder.Append("Authorization: ")
+                .Append(RtspDigestAuth.BuildAuthorization(
+                    _digestRealm,
+                    _digestNonce,
+                    method,
+                    target,
+                    _receiverPassword,
+                    _digestUsername ?? string.Empty))
+                .Append("\r\n");
+        }
+
         if (body is { Length: > 0 })
         {
             builder.Append("Content-Length: ").Append(body.Length).Append("\r\n");
@@ -634,6 +705,18 @@ public sealed class EncryptedRtspClient : IAsyncDisposable
         {
             throw new InvalidOperationException("Call ConnectAndPairAsync first.");
         }
+    }
+
+    /// <summary>
+    /// Test seam: installs a crypto channel and receiver password without a live
+    /// HKP handshake, so <see cref="SendAsync"/>'s Digest 401 retry is reachable
+    /// over a loopback socket instead of a full paired connection.
+    /// </summary>
+    internal void InstallCryptoForTests(RtspCryptoStream crypto, string? receiverPassword)
+    {
+        _crypto = crypto;
+        _keys = AirPlayControlKeys.FromSharedSecret(new byte[32]);
+        _receiverPassword = receiverPassword;
     }
 
     public async ValueTask DisposeAsync()

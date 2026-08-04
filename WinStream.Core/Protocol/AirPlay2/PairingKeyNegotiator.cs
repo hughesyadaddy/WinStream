@@ -1,10 +1,12 @@
 using WinStream.Core.Logging;
+using WinStream.Core.Persistence;
 
 namespace WinStream.Core.Protocol.AirPlay2;
 
 /// <summary>
 /// Decides which pairing path produces the control keys: stored identity first,
-/// then a one-time PIN pair-setup, then transient (Accept every time).
+/// then pair-setup with the receiver password or a one-time PIN, then transient
+/// (Accept every time).
 /// </summary>
 /// <remarks>
 /// Kept free of sockets so the fallback order and the persistence callbacks can be
@@ -59,7 +61,12 @@ public sealed class PairingKeyNegotiator
             }
         }
 
-        var requestPin = _options?.RequestPinAsync;
+        // A password receiver never displays a code: the password is the pair-setup
+        // secret, so persistent trust is reachable without any PIN prompt.
+        var password = _options?.ReceiverPassword;
+        var requestPin = string.IsNullOrEmpty(password)
+            ? _options?.RequestPinAsync
+            : _ => Task.FromResult<string?>(password);
         if (requestPin is not null)
         {
             var persisted = false;

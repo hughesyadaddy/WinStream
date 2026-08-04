@@ -1,6 +1,5 @@
 using System.Diagnostics;
 using WinStream.Core.Protocol.Raop;
-using WinStream.Core.Streaming;
 
 namespace WinStream.Core.Audio;
 
@@ -208,7 +207,7 @@ public sealed class AudioFrameSendPump : IAsyncDisposable
         // on frames actually handed over, so a non-44.1 source cannot drift.
         var chunkSourceFrames = Math.Max(
             1,
-            AlacEncoder.FramesPerPacket * format.SampleRate / 44100);
+            AudioPacingConstants.PacketFrames * format.SampleRate / 44100);
         var chunkBytes = chunkSourceFrames * bytesPerSourceFrame;
 
         var offset = 0;

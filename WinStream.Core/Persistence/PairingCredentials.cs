@@ -1,4 +1,4 @@
-namespace WinStream.Core.Protocol.AirPlay2;
+namespace WinStream.Core.Persistence;
 
 /// <summary>
 /// Long-term HomeKit pairing identity exchanged during persistent pair-setup.

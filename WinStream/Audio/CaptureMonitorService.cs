@@ -56,7 +56,7 @@ public sealed class CaptureMonitorService : IAsyncDisposable
         get
         {
             var source = _source;
-            return ExtremeCaptureExperiment.ResolveContributionMilliseconds(
+            return CaptureModePolicy.ResolveContributionMilliseconds(
                 useEventDrivenCapture: source?.UseEventDrivenCapture == true,
                 hasMeasuredContribution: source?.HasMeasuredContribution == true,
                 measuredContributionMilliseconds: source?.MeasuredContributionMilliseconds ?? 0,
@@ -126,7 +126,7 @@ public sealed class CaptureMonitorService : IAsyncDisposable
     public async Task SyncExtremeCaptureExperimentAsync(CancellationToken cancellationToken = default)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        var wantEventDriven = ExtremeCaptureExperiment.WantsEventDriven(
+        var wantEventDriven = CaptureModePolicy.WantsEventDriven(
             Settings.ExtremeEventDrivenCapture,
             Settings.PlaybackResponsiveness);
         WasapiLoopbackSource existing;
@@ -203,7 +203,7 @@ public sealed class CaptureMonitorService : IAsyncDisposable
         var source = new WasapiLoopbackSource
         {
             PreferredEndpointId = Settings.SelectedRenderDeviceId,
-            UseEventDrivenCapture = ExtremeCaptureExperiment.WantsEventDriven(
+            UseEventDrivenCapture = CaptureModePolicy.WantsEventDriven(
                 Settings.ExtremeEventDrivenCapture,
                 Settings.PlaybackResponsiveness)
         };

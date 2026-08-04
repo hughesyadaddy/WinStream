@@ -23,13 +23,17 @@ public class PairingOptionsWiringTests
         IPairingCredentialStore store,
         string receiverKey,
         Func<CancellationToken, Task<string?>>? requestPin = null,
-        FakeSessionMap? sessions = null) =>
-        PairingOptionsFactory.Create(
+        FakeSessionMap? sessions = null)
+    {
+        // Mirrors StreamingOrchestrator.CreatePairingOptions: the caller clears any
+        // stale transient mark before building options, not the factory itself.
+        sessions?.ClearTransient(receiverKey);
+        return PairingOptionsFactory.Create(
             store,
             receiverKey,
             requestPin,
-            clearTransient: () => sessions?.ClearTransient(receiverKey),
             markTransient: () => sessions?.MarkTransient(receiverKey));
+    }
 
 
     [Fact]
@@ -117,7 +121,7 @@ public class PairingOptionsWiringTests
     }
 
     [Fact]
-    public void A_password_path_skips_identity_and_pin_callbacks()
+    public void A_password_path_keeps_identity_and_pin_callbacks()
     {
         var store = new FakePairingCredentialStore();
         store.Save("receiver-a", Complete());
@@ -125,20 +129,21 @@ public class PairingOptionsWiringTests
         var sessions = new FakeSessionMap();
         sessions.Add("receiver-a");
 
+        sessions.ClearTransient("receiver-a");
         var options = PairingOptionsFactory.Create(
             store,
             "receiver-a",
             pin,
-            clearTransient: () => sessions.ClearTransient("receiver-a"),
             markTransient: () => sessions.MarkTransient("receiver-a"),
             receiverPassword: "hunter2");
 
         Assert.Equal("hunter2", options.ReceiverPassword);
-        Assert.Null(options.StoredCredentials);
-        Assert.Null(options.RequestPinAsync);
-        Assert.Null(options.OnPaired);
-        Assert.Null(options.OnStoredCredentialsRejected);
-        Assert.Null(options.OnTransientPairing);
+        Assert.NotNull(options.StoredCredentials);
+        Assert.Equal("CLIENT", options.StoredCredentials!.ClientPairingId);
+        Assert.Same(pin, options.RequestPinAsync);
+        Assert.NotNull(options.OnPaired);
+        Assert.NotNull(options.OnStoredCredentialsRejected);
+        Assert.NotNull(options.OnTransientPairing);
         Assert.False(sessions.UsesTransientPairing("receiver-a"));
     }
 

@@ -17,7 +17,7 @@ public class ExtremePressureHysteresisTests
     public void Debounce_two_consecutive_pressure_windows_arm_visibility()
     {
         // Debounce-only: product eligibility (exhausted ladder) is
-        // ExtremeCaptureExperiment.ArmsExhaustedPressureBanner.
+        // CaptureModePolicy.ArmsExhaustedPressureBanner.
         var hysteresis = new ExtremePressureHysteresis();
         hysteresis.ObserveWindow(pressureThisWindow: true);
 

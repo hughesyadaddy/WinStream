@@ -41,11 +41,12 @@ public class SessionLatencyFramesTests
     [Fact]
     public void Both_protocols_accept_the_shared_auto_step()
     {
-        var shared = LatencyAutoController.AutoStartFrames + LatencyAutoController.StepFrames;
+        var shared = LatencyAutoController.NextRungUp(LatencyAutoController.AutoStartFrames);
         var a = new AirPlay2Session(DummyReceiver());
         var b = new RaopSession(DummyReceiver());
         a.SetEffectiveLatencyFrames(shared);
         b.SetEffectiveLatencyFrames(shared);
+        Assert.Equal(3520u, shared);
         Assert.Equal(shared, a.EffectiveLatencyFrames);
         Assert.Equal(shared, b.EffectiveLatencyFrames);
     }

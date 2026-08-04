@@ -76,6 +76,33 @@ public class PairingKeyNegotiatorTests
     }
 
     [Fact]
+    public async Task A_receiver_password_pairs_persistently_without_a_pin_prompt()
+    {
+        var recorder = new Recorder();
+        var options = new PairingOptions
+        {
+            ReceiverPassword = "hunter2",
+            OnPaired = credentials => recorder.Steps.Add("saved"),
+            OnTransientPairing = () => recorder.Steps.Add("transient")
+        };
+        var negotiator = new PairingKeyNegotiator(options, recorder.Reset);
+        string? secretUsed = null;
+
+        using var keys = await negotiator.NegotiateAsync(
+            (_, _) => Task.FromResult(Keys(0x22)),
+            async (requestSecret, token) =>
+            {
+                secretUsed = await requestSecret(token);
+                return Complete();
+            },
+            _ => throw new InvalidOperationException("transient must not run"),
+            CancellationToken.None);
+
+        Assert.Equal("hunter2", secretUsed);
+        Assert.Equal(["saved"], recorder.Steps);
+    }
+
+    [Fact]
     public async Task A_verified_pairing_never_reports_transient()
     {
         var recorder = new Recorder();

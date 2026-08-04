@@ -55,53 +55,6 @@ public class AirPlay2SessionTests
     }
 
     [Fact]
-    public async Task TimelineAnchorGate_does_not_publish_before_freeze()
-    {
-        var frozen = new TaskCompletionSource(
-            TaskCreationOptions.RunContinuationsAsynchronously);
-        var published = new TaskCompletionSource(
-            TaskCreationOptions.RunContinuationsAsynchronously);
-
-        var run = TimelineAnchorGate.RunAfterFreezeAsync(
-            frozen.Task,
-            _ =>
-            {
-                published.TrySetResult();
-                return Task.CompletedTask;
-            },
-            CancellationToken.None);
-
-        await Task.Delay(25);
-        Assert.False(published.Task.IsCompleted);
-
-        frozen.SetResult();
-        await run;
-        Assert.True(published.Task.IsCompletedSuccessfully);
-    }
-
-    [Fact]
-    public async Task TimelineAnchorGate_cancellation_prevents_publication()
-    {
-        var frozen = new TaskCompletionSource(
-            TaskCreationOptions.RunContinuationsAsynchronously);
-        var published = false;
-        using var cancellation = new CancellationTokenSource();
-
-        var run = TimelineAnchorGate.RunAfterFreezeAsync(
-            frozen.Task,
-            _ =>
-            {
-                published = true;
-                return Task.CompletedTask;
-            },
-            cancellation.Token);
-
-        await cancellation.CancelAsync();
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => run);
-        Assert.False(published);
-    }
-
-    [Fact]
     public async Task Disconnect_when_already_disconnected_is_noop()
     {
         var receiver = new DeviceInfo

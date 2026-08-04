@@ -15,7 +15,7 @@ public class ReceiverPasswordResolverTests
             store,
             "receiver-a",
             requiresPassword: false,
-            _ =>
+            (_, _) =>
             {
                 prompted = true;
                 return Task.FromResult<string?>("unused");
@@ -37,7 +37,7 @@ public class ReceiverPasswordResolverTests
             store,
             "receiver-a",
             requiresPassword: true,
-            _ =>
+            (_, _) =>
             {
                 prompted = true;
                 return Task.FromResult<string?>("prompted");
@@ -54,7 +54,7 @@ public class ReceiverPasswordResolverTests
             new FakeReceiverPasswordStore(),
             "receiver-a",
             requiresPassword: true,
-            _ => Task.FromResult<string?>("  prompted  "));
+            (_, _) => Task.FromResult<string?>("  prompted  "));
 
         Assert.Equal("prompted", result);
     }
@@ -70,7 +70,7 @@ public class ReceiverPasswordResolverTests
                 new FakeReceiverPasswordStore(),
                 "receiver-a",
                 requiresPassword: true,
-                _ => Task.FromResult(prompted)));
+                (_, _) => Task.FromResult(prompted)));
 
         Assert.Equal(
             ConnectionFailureCopy.PasswordRequiredRow,
@@ -78,6 +78,35 @@ public class ReceiverPasswordResolverTests
         Assert.Equal(
             ConnectionFailureCopy.PasswordRequiredDetail,
             ConnectionFailureCopy.Detail(exception));
+    }
+
+    [Fact]
+    public async Task A_required_password_with_no_wired_prompt_throws_typed_failure()
+    {
+        await Assert.ThrowsAsync<ReceiverPasswordRequiredException>(() =>
+            ReceiverPasswordResolver.ResolveAsync(
+                new FakeReceiverPasswordStore(),
+                "receiver-a",
+                requiresPassword: true,
+                promptAsync: null));
+    }
+
+    [Fact]
+    public async Task Cancelling_the_connect_stops_waiting_even_if_the_prompt_task_never_completes()
+    {
+        var neverCompletes = new TaskCompletionSource<string?>();
+        using var cancellation = new CancellationTokenSource();
+
+        var resolve = ReceiverPasswordResolver.ResolveAsync(
+            new FakeReceiverPasswordStore(),
+            "receiver-a",
+            requiresPassword: true,
+            (_, _) => neverCompletes.Task,
+            cancellation.Token);
+
+        await cancellation.CancelAsync();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => resolve);
     }
 
     [Fact]

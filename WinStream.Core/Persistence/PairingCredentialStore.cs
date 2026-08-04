@@ -1,6 +1,5 @@
 using System.Text.Json;
 using WinStream.Core.Logging;
-using WinStream.Core.Protocol.AirPlay2;
 
 namespace WinStream.Core.Persistence;
 

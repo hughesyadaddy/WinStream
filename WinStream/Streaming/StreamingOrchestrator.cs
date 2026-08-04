@@ -26,7 +26,7 @@ public sealed class StreamingOrchestrator : IAsyncDisposable
     private readonly IPairingCredentialStore _pairingStore;
     private readonly IReceiverPasswordStore _passwordStore;
     private Func<CancellationToken, Task<string?>>? _requestPairingPinAsync;
-    private Func<CancellationToken, Task<string?>>? _requestReceiverPasswordAsync;
+    private Func<string, CancellationToken, Task<string?>>? _requestReceiverPasswordAsync;
     private readonly SemaphoreSlim _lifecycle = new(1, 1);
     private readonly Dictionary<string, SessionEntry> _sessions = new(StringComparer.Ordinal);
     private readonly PcmFanoutClock _fanoutClock = new();
@@ -39,7 +39,7 @@ public sealed class StreamingOrchestrator : IAsyncDisposable
     private HighResolutionWaiter? _waiter;
     private IAudioSource? _audioSource;
     private CancellationTokenSource? _reconnectCts;
-    private SessionState _aggregateState = SessionState.Disconnected;
+    private volatile SessionState _aggregateState = SessionState.Disconnected;
     private PlaybackResponsiveness _responsiveness = PlaybackResponsiveness.Auto;
     private AudioFidelity _fidelity = AudioFidelity.Auto;
     private float _volumeDb;
@@ -76,10 +76,16 @@ public sealed class StreamingOrchestrator : IAsyncDisposable
     /// mDNS advertises PasswordRequired and nothing is stored yet.
     /// </summary>
     public void SetReceiverPasswordPrompt(
-        Func<CancellationToken, Task<string?>>? requestPasswordAsync) =>
+        Func<string, CancellationToken, Task<string?>>? requestPasswordAsync) =>
         _requestReceiverPasswordAsync = requestPasswordAsync;
 
     public event EventHandler<SessionStateChanged>? StateChanged;
+
+    /// <summary>
+    /// Raised when the effective live buffer or fidelity changes without a session
+    /// state transition, so status UI can refresh the quality readout.
+    /// </summary>
+    public event EventHandler? LiveQualityChanged;
 
     /// <summary>
     /// Raised when the Extreme pressure warning should appear or disappear. Fires only
@@ -96,6 +102,28 @@ public sealed class StreamingOrchestrator : IAsyncDisposable
     /// UI can fall back to it when a preset is refused.
     /// </summary>
     public PlaybackResponsiveness Responsiveness => _responsiveness;
+
+    public AudioFidelity Fidelity => _fidelity;
+
+    /// <summary>
+    /// Live send-pump counters, or <see langword="null"/> when nothing is streaming.
+    /// Cumulative fields climb continuously, so the UI can poll this for movement.
+    /// </summary>
+    public LiveStreamStats? LiveStats
+    {
+        get
+        {
+            var pump = _sendPump;
+            return pump is null
+                ? null
+                : new LiveStreamStats(
+                    pump.SendCount,
+                    pump.QueueDepth,
+                    pump.QueueDropCount,
+                    pump.SlowSendCount,
+                    pump.CatchUpClampCount);
+        }
+    }
 
     public IReadOnlyList<DeviceInfo> ConnectedReceivers =>
         _sessions.Values.Select(entry => entry.Receiver).ToList();
@@ -172,6 +200,8 @@ public sealed class StreamingOrchestrator : IAsyncDisposable
         {
             entry.Session.SetAudioFidelity(fidelity);
         }
+
+        LiveQualityChanged?.Invoke(this, EventArgs.Empty);
     }
 
     public async Task ConnectAsync(
@@ -214,6 +244,10 @@ public sealed class StreamingOrchestrator : IAsyncDisposable
 
             if (LabSessionPolicy.BlocksAdditionalReceiver(_responsiveness, isFirstSession))
             {
+                // Connecting already overwrote Streaming above; without this an
+                // existing session that is still playing would be stuck reporting
+                // "Connecting…" forever.
+                RefreshAggregate("connect-failed");
                 throw new InvalidOperationException(LabSessionPolicy.MultiRoomBlockedMessage);
             }
 
@@ -225,8 +259,30 @@ public sealed class StreamingOrchestrator : IAsyncDisposable
                 ResetSignalWindowCounters();
             }
 
-            var receiverPassword = await ResolveReceiverPasswordAsync(receiver, cancellationToken)
-                .ConfigureAwait(false);
+            // RaopSession / classic RtspClient have no Digest path, so resolving
+            // or persisting a password for them would prompt with no consumer.
+            string? receiverPassword = null;
+            if (protocol == AirPlayProtocolKind.AirPlay2)
+            {
+                try
+                {
+                    receiverPassword = await ReceiverPasswordResolver.ResolveAsync(
+                            _passwordStore,
+                            ReceiverKey.For(receiver),
+                            receiver.RequiresPassword,
+                            _requestReceiverPasswordAsync,
+                            cancellationToken)
+                        .ConfigureAwait(false);
+                }
+                catch
+                {
+                    // The aggregate is already Connecting. Failing here creates no session,
+                    // so nothing else would ever move it off "Connecting…".
+                    RefreshAggregate("connect-failed");
+                    throw;
+                }
+            }
+
             var session = CreateConfiguredSession(receiver, protocol, receiverPassword);
             session.StateChanged += OnSessionStateChanged;
             var entry = new SessionEntry(receiver, session, protocol);
@@ -238,7 +294,7 @@ public sealed class StreamingOrchestrator : IAsyncDisposable
             try
             {
                 await session.ConnectAsync(cancellationToken).ConfigureAwait(false);
-                if (!string.IsNullOrEmpty(receiverPassword))
+                if (protocol == AirPlayProtocolKind.AirPlay2 && !string.IsNullOrEmpty(receiverPassword))
                 {
                     _passwordStore.Save(id, receiverPassword);
                 }
@@ -252,7 +308,8 @@ public sealed class StreamingOrchestrator : IAsyncDisposable
             }
             catch (Exception ex)
             {
-                if (ConnectionFailureCopy.IsWrongPassword(ex.Message))
+                if (protocol == AirPlayProtocolKind.AirPlay2 &&
+                    ex is AirPlayPasswordRejectedException)
                 {
                     _passwordStore.Remove(id);
                 }
@@ -524,10 +581,12 @@ public sealed class StreamingOrchestrator : IAsyncDisposable
 
         var now = DateTimeOffset.UtcNow;
         var isSilent = _audioSource?.IsSilent == true;
-        if (!_audioStartedMarked && !isSilent)
+        if (LatencyPressureEvaluation.TryMarkAudioStarted(
+                ref _audioStartedMarked,
+                isSilent,
+                now,
+                _latency))
         {
-            _latency.MarkAudioStarted(now);
-            _audioStartedMarked = true;
             ResetSignalWindowCounters();
             return;
         }
@@ -537,70 +596,55 @@ public sealed class StreamingOrchestrator : IAsyncDisposable
             return;
         }
 
-        var dropDelta = pump.QueueDropCount - _dropsAtWindowStart;
-        var slowDelta = pump.SlowSendCount - _slowAtWindowStart;
-        var isStreaming =
-            State is SessionState.Streaming or SessionState.Degraded;
+        var signals = new LatencyPressureEvaluation.WindowSignals(
+            pump.QueueDropCount - _dropsAtWindowStart,
+            pump.SlowSendCount - _slowAtWindowStart,
+            _aggregateState is SessionState.Streaming or SessionState.Degraded,
+            isSilent,
+            now);
 
-        if (_latency.IsAutoEnabled || _latency.IsExtremeRaiseEnabled)
+        var latencyOutcome = LatencyPressureEvaluation.EvaluateLatencyChange(_latency, signals);
+        if (latencyOutcome.LatencyChanged)
         {
-            if (_latency.TryRaise(dropDelta, slowDelta, isStreaming, isSilent, now))
-            {
-                ApplyLatencyToAllSessions(_latency.EffectiveFrames);
-                var kind = _latency.IsExtremeRaiseEnabled ? "Extreme" : "Auto";
-                AppLog.Info(
-                    "stream",
-                    $"{kind} latency raised to {_latency.EffectiveFrames} frames " +
-                    $"(~{_latency.EffectiveFrames / 44.1:0} ms) " +
-                    $"drops={dropDelta} slowSends={slowDelta}");
-
-                // A successful mid-ladder raise clears any stale exhausted banner.
-                if (_latency.IsExtremeRaiseEnabled && !_latency.IsExtremeLadderExhausted)
-                {
-                    ClearExtremePressure();
-                }
-            }
+            OnEffectiveLatencyChanged(latencyOutcome, signals);
         }
 
-        if (_latency.IsExtremeRaiseEnabled)
+        var bannerChange = LatencyPressureEvaluation.EvaluateExtremePressureBanner(
+            _latency,
+            _extremePressure,
+            signals);
+        if (bannerChange is bool visible)
         {
-            UpdateExtremePressure(dropDelta, slowDelta, isStreaming, isSilent, now);
+            if (visible)
+            {
+                AppLog.Warn(
+                    "stream",
+                    $"Extreme ladder exhausted under pressure drops={signals.DropDelta} " +
+                    $"slowSends={signals.SlowDelta}");
+            }
+
+            ExtremePressureChanged?.Invoke(this, visible);
         }
 
         ResetSignalWindowCounters();
     }
 
-    private void UpdateExtremePressure(
-        long dropDelta,
-        long slowDelta,
-        bool isStreaming,
-        bool isSilent,
-        DateTimeOffset now)
+    private void OnEffectiveLatencyChanged(
+        LatencyPressureEvaluation.Outcome outcome,
+        LatencyPressureEvaluation.WindowSignals signals)
     {
-        // Mid-ladder raises are silent. The banner only arms at the Extreme ceiling.
-        var eligible = ExtremeCaptureExperiment.ArmsExhaustedPressureBanner(
-            Responsiveness,
-            _latency.IsExtremeLadderExhausted,
-            isStreaming,
-            isSilent,
-            _latency.IsPastStartupGrace(now));
+        ApplyLatencyToAllSessions(_latency.EffectiveFrames);
+        LiveQualityChanged?.Invoke(this, EventArgs.Empty);
+        var ms = AirPlayLiveQualityCopy.Milliseconds(_latency.EffectiveFrames);
+        AppLog.Info(
+            "stream",
+            $"{outcome.ModeLabel} latency adjusted to {_latency.EffectiveFrames} frames " +
+            $"(~{ms:0.######} ms) drops={signals.DropDelta} slowSends={signals.SlowDelta}");
 
-        var pressure = eligible && LatencyAutoController.HasPressure(dropDelta, slowDelta);
-        var wasVisible = _extremePressure.IsWarningVisible;
-        var visible = _extremePressure.ObserveWindow(pressure);
-        if (visible == wasVisible)
+        if (outcome.ClearExtremePressureBanner)
         {
-            return;
+            ClearExtremePressure();
         }
-
-        if (visible)
-        {
-            AppLog.Warn(
-                "stream",
-                $"Extreme ladder exhausted under pressure drops={dropDelta} slowSends={slowDelta}");
-        }
-
-        ExtremePressureChanged?.Invoke(this, visible);
     }
 
     private void ApplyLatencyToAllSessions(uint frames)
@@ -824,7 +868,12 @@ public sealed class StreamingOrchestrator : IAsyncDisposable
                     var replacement = CreateConfiguredSession(
                         entry.Receiver,
                         entry.Protocol,
-                        StoredReceiverPasswordOrNull(entry.Receiver));
+                        entry.Protocol == AirPlayProtocolKind.AirPlay2
+                            ? ReceiverPasswordResolver.StoredOrNull(
+                                _passwordStore,
+                                ReceiverKey.For(entry.Receiver),
+                                entry.Receiver.RequiresPassword)
+                            : null);
                     replacement.StateChanged += OnSessionStateChanged;
                     lock (_sessionsGate)
                     {
@@ -877,20 +926,22 @@ public sealed class StreamingOrchestrator : IAsyncDisposable
     {
         var receiverKey = ReceiverKey.For(receiver);
         var usePassword = !string.IsNullOrEmpty(receiverPassword);
+
+        // Each attempt re-decides its pairing mode. Clearing first matters on a quality
+        // rebuild that reuses a SessionEntry: a previous temporary pairing must not keep
+        // claiming Accept-every-time after a successful pair-verify.
+        lock (_sessionsGate)
+        {
+            if (_sessions.TryGetValue(receiverKey, out var existing))
+            {
+                existing.UsesTransientPairing = false;
+            }
+        }
+
         return PairingOptionsFactory.Create(
             _pairingStore,
             receiverKey,
             usePassword ? null : _requestPairingPinAsync,
-            clearTransient: () =>
-            {
-                lock (_sessionsGate)
-                {
-                    if (_sessions.TryGetValue(receiverKey, out var existing))
-                    {
-                        existing.UsesTransientPairing = false;
-                    }
-                }
-            },
             markTransient: () =>
             {
                 lock (_sessionsGate)
@@ -903,27 +954,6 @@ public sealed class StreamingOrchestrator : IAsyncDisposable
             },
             receiverPassword: receiverPassword);
     }
-
-    /// <summary>
-    /// Resolves the AirPlay Receiver password for a PasswordRequired device:
-    /// stored first, then the UI prompt. Never logs the value.
-    /// </summary>
-    private Task<string?> ResolveReceiverPasswordAsync(
-        DeviceInfo receiver,
-        CancellationToken cancellationToken) =>
-        ReceiverPasswordResolver.ResolveAsync(
-            _passwordStore,
-            ReceiverKey.For(receiver),
-            receiver.RequiresPassword,
-            _requestReceiverPasswordAsync,
-            cancellationToken);
-
-    /// <summary>Store-only lookup for rebuilds — never prompts mid-session.</summary>
-    private string? StoredReceiverPasswordOrNull(DeviceInfo receiver) =>
-        ReceiverPasswordResolver.StoredOrNull(
-            _passwordStore,
-            ReceiverKey.For(receiver),
-            receiver.RequiresPassword);
 
     private void EnsureHomogeneousWithExisting(AirPlayProtocolKind incoming)
     {

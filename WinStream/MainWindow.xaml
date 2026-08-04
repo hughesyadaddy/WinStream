@@ -64,9 +64,21 @@
                                  Height="8"
                                  VerticalAlignment="Center"
                                  Fill="{ThemeResource TextFillColorSecondaryBrush}"/>
-                        <TextBlock x:Name="statusPillText"
-                                   Text="Not connected"
-                                   Style="{StaticResource CaptionTextBlockStyle}"/>
+                        <StackPanel VerticalAlignment="Center" Spacing="0">
+                            <TextBlock x:Name="statusPillText"
+                                       Text="Not connected"
+                                       TextTrimming="CharacterEllipsis"
+                                       MaxWidth="280"
+                                       Style="{StaticResource CaptionTextBlockStyle}"/>
+                            <TextBlock x:Name="statusLiveStatsText"
+                                       Visibility="Collapsed"
+                                       FontSize="11"
+                                       Opacity="0.78"
+                                       TextTrimming="CharacterEllipsis"
+                                       MaxWidth="280"
+                                       AutomationProperties.LiveSetting="Polite"
+                                       AutomationProperties.Name="Live stream buffer and rate"/>
+                        </StackPanel>
                     </StackPanel>
                 </Border>
             </Grid>
@@ -617,9 +629,58 @@
                 <Border x:Name="streamingQualityCard" Style="{StaticResource CardBorderStyle}">
                     <StackPanel Spacing="14">
                         <StackPanel Spacing="2">
-                            <TextBlock Text="Streaming quality" Style="{StaticResource BodyStrongTextBlockStyle}"/>
-                            <TextBlock Text="Delay and conversion are separate. Changing a setting while streaming reconnects automatically."
-                                       Style="{StaticResource HintTextStyle}"/>
+                            <Grid ColumnSpacing="8">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0"
+                                           Text="Streaming quality"
+                                           Style="{StaticResource BodyStrongTextBlockStyle}"
+                                           VerticalAlignment="Center"/>
+                                <Button Grid.Column="1"
+                                        x:Name="liveMetricsInfoButton"
+                                        Click="LiveMetricsInfo_Click"
+                                        ToolTipService.ToolTip="Live stream metrics"
+                                        AutomationProperties.Name="Live stream metrics"
+                                        Padding="6,4">
+                                    <FontIcon Glyph="&#xE946;" FontSize="14"/>
+                                    <Button.Flyout>
+                                        <Flyout x:Name="liveMetricsFlyout" Placement="Bottom">
+                                            <StackPanel Width="320" Spacing="8" Padding="4">
+                                                <TextBlock Text="Live stream metrics"
+                                                           Style="{StaticResource BodyStrongTextBlockStyle}"/>
+                                                <TextBlock x:Name="liveMetricsBufferText"
+                                                           FontSize="22"
+                                                           FontWeight="SemiBold"
+                                                           AutomationProperties.LiveSetting="Polite"
+                                                           AutomationProperties.Name="Current AirPlay speaker buffer"/>
+                                                <TextBlock x:Name="liveMetricsConfigText"
+                                                           Style="{StaticResource HintTextStyle}"
+                                                           TextWrapping="Wrap"/>
+                                                <TextBlock x:Name="liveMetricsActivityText"
+                                                           FontFamily="Consolas"
+                                                           FontSize="12"
+                                                           AutomationProperties.LiveSetting="Polite"
+                                                           AutomationProperties.Name="Live stream activity"
+                                                           TextWrapping="Wrap"/>
+                                                <TextBlock x:Name="liveMetricsChangeText"
+                                                           Visibility="Collapsed"
+                                                           FontSize="11"
+                                                           Foreground="{ThemeResource SystemFillColorCautionBrush}"
+                                                           TextWrapping="Wrap"/>
+                                                <TextBlock x:Name="liveMetricsTooltipText"
+                                                           Style="{StaticResource HintTextStyle}"
+                                                           Opacity="0.72"
+                                                           TextWrapping="Wrap"/>
+                                            </StackPanel>
+                                        </Flyout>
+                                    </Button.Flyout>
+                                </Button>
+                            </Grid>
+                            <TextBlock Text="Configure buffer and fidelity. Live stats appear next to Streaming above; open the info button for full metrics."
+                                       Style="{StaticResource HintTextStyle}"
+                                       TextWrapping="Wrap"/>
                         </StackPanel>
 
                         <StackPanel Spacing="8">

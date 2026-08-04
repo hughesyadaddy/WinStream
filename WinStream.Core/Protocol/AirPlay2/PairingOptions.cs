@@ -1,3 +1,5 @@
+using WinStream.Core.Persistence;
+
 namespace WinStream.Core.Protocol.AirPlay2;
 
 /// <summary>
@@ -17,8 +19,9 @@ public sealed class PairingOptions
     public Func<CancellationToken, Task<string?>>? RequestPinAsync { get; init; }
 
     /// <summary>
-    /// AirPlay Receiver password used as the SRP secret for transient pairing on
-    /// password-protected receivers. The fixed transient PIN fails without it.
+    /// AirPlay Receiver password. Used as the transient HKP SRP secret when that
+    /// path runs, and to answer RTSP Digest <c>WWW-Authenticate</c> after
+    /// persistent pair-verify (SETUP would otherwise 401).
     /// </summary>
     public string? ReceiverPassword { get; init; }
 

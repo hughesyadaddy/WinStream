@@ -142,6 +142,7 @@ if (-not $msix) {
     throw "No .msix produced under $($config.PackageOutputDirectory) or WinStream\AppPackages"
 }
 
+
 Write-Host "Package: $($msix.FullName)"
 
 function Install-WinStreamPackageTrust {

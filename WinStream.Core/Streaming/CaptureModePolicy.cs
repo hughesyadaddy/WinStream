@@ -1,23 +1,24 @@
 namespace WinStream.Core.Streaming;
 
 /// <summary>
-/// Pure Extreme lab rules for the optional event-driven WASAPI loopback experiment.
-/// Keeps flag∧LabPacket gating and contribution resolution unit-testable without WinUI.
+/// WASAPI loopback capture mode for low-latency presets.
+/// Auto always uses event-driven capture; Extreme uses it when opted in via settings.
 /// </summary>
-public static class ExtremeCaptureExperiment
+public static class CaptureModePolicy
 {
     /// <summary>
-    /// Event-driven loopback is Extreme-only and opt-in. Other presets stay on the
-    /// frozen 50 ms poll even when the settings flag is true.
+    /// Auto always uses event-driven loopback to minimize capture contribution at the
+    /// ~50 ms floor. Extreme uses it only when the settings flag is enabled.
     /// </summary>
     public static bool WantsEventDriven(
         bool extremeEventDrivenCaptureEnabled,
         PlaybackResponsiveness responsiveness) =>
-        extremeEventDrivenCaptureEnabled &&
-        responsiveness == PlaybackResponsiveness.LabPacket;
+        responsiveness == PlaybackResponsiveness.Auto ||
+        (extremeEventDrivenCaptureEnabled &&
+         responsiveness == PlaybackResponsiveness.LabPacket);
 
     /// <summary>
-    /// Honesty contribution for Extreme warnings: measured p95 when the experiment is
+    /// Honesty contribution for Extreme warnings: measured p95 when event-driven is
     /// warm; otherwise the frozen poll quantum.
     /// </summary>
     public static int ResolveContributionMilliseconds(
@@ -33,12 +34,10 @@ public static class ExtremeCaptureExperiment
     /// Mid-ladder raises stay silent. The exhausted InfoBar may arm only at the ceiling.
     /// </summary>
     public static bool ArmsExhaustedPressureBanner(
-        PlaybackResponsiveness responsiveness,
         bool ladderExhausted,
         bool isStreaming,
         bool isSilent,
         bool pastStartupGrace) =>
-        responsiveness == PlaybackResponsiveness.LabPacket &&
         ladderExhausted &&
         isStreaming &&
         !isSilent &&

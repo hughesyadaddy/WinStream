@@ -15,7 +15,7 @@ public sealed class PcmPacketBuffer
 
     private const int TargetRate = 44100;
     private const int TargetChannels = 2;
-    private const int FramesPerPacket = Protocol.Raop.AlacEncoder.FramesPerPacket;
+    private const int FramesPerPacket = AudioPacingConstants.PacketFrames;
     private const int AlacPacketBytes = Protocol.Raop.AlacEncoder.PcmBytesPerPacket;
 
     /// <summary>

@@ -1,3 +1,5 @@
+using WinStream.Core.Protocol.AirPlay2;
+
 namespace WinStream.Core.Streaming;
 
 /// <summary>
@@ -28,9 +30,17 @@ public static class ConnectionFailureCopy
     public static string DeviceRow(Exception exception)
     {
         ArgumentNullException.ThrowIfNull(exception);
-        return exception is ReceiverPasswordRequiredException
-            ? PasswordRequiredRow
-            : DeviceRow(exception.Message);
+        if (exception is ReceiverPasswordRequiredException)
+        {
+            return PasswordRequiredRow;
+        }
+
+        if (exception is AirPlayPasswordRejectedException)
+        {
+            return WrongPasswordRow;
+        }
+
+        return DeviceRow(exception.Message);
     }
 
     public static string DeviceRow(string? message)
@@ -56,9 +66,17 @@ public static class ConnectionFailureCopy
     public static string Detail(Exception exception)
     {
         ArgumentNullException.ThrowIfNull(exception);
-        return exception is ReceiverPasswordRequiredException
-            ? PasswordRequiredDetail
-            : Detail(exception.Message);
+        if (exception is ReceiverPasswordRequiredException)
+        {
+            return PasswordRequiredDetail;
+        }
+
+        if (exception is AirPlayPasswordRejectedException)
+        {
+            return WrongPasswordDetail;
+        }
+
+        return Detail(exception.Message);
     }
 
     public static string Detail(string? message)

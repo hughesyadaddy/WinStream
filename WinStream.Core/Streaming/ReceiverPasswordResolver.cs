@@ -1,3 +1,4 @@
+using WinStream.Core.Logging;
 using WinStream.Core.Persistence;
 
 namespace WinStream.Core.Streaming;
@@ -21,7 +22,7 @@ public static class ReceiverPasswordResolver
         IReceiverPasswordStore store,
         string receiverKey,
         bool requiresPassword,
-        Func<CancellationToken, Task<string?>>? promptAsync,
+        Func<string, CancellationToken, Task<string?>>? promptAsync,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(store);
@@ -35,18 +36,30 @@ public static class ReceiverPasswordResolver
         if (store.TryGet(receiverKey, out var stored) &&
             !string.IsNullOrWhiteSpace(stored))
         {
+            AppLog.Info("password", $"Using saved password for {receiverKey}");
             return stored;
         }
 
-        if (promptAsync is not null)
+        if (promptAsync is null)
         {
-            var prompted = await promptAsync(cancellationToken).ConfigureAwait(false);
-            if (!string.IsNullOrWhiteSpace(prompted))
-            {
-                return prompted.Trim();
-            }
+            AppLog.Warn("password", $"No password prompt wired for {receiverKey}");
+            throw new ReceiverPasswordRequiredException();
         }
 
+        // The dialog task itself resolves to empty on cancel (WinUI closes it via
+        // a token.Register callback), but that happens on the UI thread's own
+        // schedule. WaitAsync makes a cancelled connect stop waiting immediately
+        // instead of racing a joining caller for whatever the dialog eventually
+        // returns.
+        var prompted = await promptAsync(receiverKey, cancellationToken)
+            .WaitAsync(cancellationToken)
+            .ConfigureAwait(false);
+        if (!string.IsNullOrWhiteSpace(prompted))
+        {
+            return prompted.Trim();
+        }
+
+        AppLog.Info("password", $"Prompt returned no password for {receiverKey}");
         throw new ReceiverPasswordRequiredException();
     }
 

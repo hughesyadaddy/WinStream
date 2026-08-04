@@ -57,7 +57,7 @@ public sealed class AppSettings
     /// </summary>
     public string? SenderDeviceId { get; set; }
 
-    /// <summary>Playback buffer preference. Default Auto starts ~250 ms and may climb.</summary>
+    /// <summary>Playback buffer preference. Default Auto starts ~50 ms and adjusts dynamically.</summary>
     public PlaybackResponsiveness PlaybackResponsiveness { get; set; } = PlaybackResponsiveness.Auto;
 
     /// <summary>PCM conversion preference. Default Auto skips SRC when already 44.1 stereo.</summary>

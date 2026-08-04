@@ -10,6 +10,7 @@ using Org.BouncyCastle.Math;
 using Org.BouncyCastle.Security;
 using Org.BouncyCastle.Utilities;
 using WinStream.Core.Logging;
+using WinStream.Core.Persistence;
 
 namespace WinStream.Core.Protocol.AirPlay2;
 
@@ -54,16 +55,18 @@ public static class HkpPersistent
     }
 
     /// <summary>
-    /// Completes pair-setup M1–M6. Call <see cref="RequestPinDisplayAsync"/> first
-    /// so the receiver actually shows a code; the prompt must return those digits
-    /// before M3 is sent.
+    /// Completes pair-setup M1–M6. With an on-screen code, call
+    /// <see cref="RequestPinDisplayAsync"/> first so the receiver shows one. A
+    /// password-protected receiver never shows a code: its AirPlay password is
+    /// the SRP secret, and <paramref name="secretName"/> keeps errors truthful.
     /// </summary>
     public static async Task<PairingCredentials> PairSetupAsync(
         Stream stream,
         string host,
         int port,
         Func<CancellationToken, Task<string?>> requestPinAsync,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        string secretName = "AirPlay code")
     {
         ArgumentNullException.ThrowIfNull(stream);
         ArgumentException.ThrowIfNullOrWhiteSpace(host);
@@ -80,7 +83,7 @@ public static class HkpPersistent
         ThrowIfError(m2, "M2");
         RequireState(m2, 0x02, "M2");
 
-        AppLog.Info("pair", "Persistent pair-setup M2 — waiting for AirPlay code");
+        AppLog.Info("pair", $"Persistent pair-setup M2 — waiting for {secretName}");
         var pin = await requestPinAsync(cancellationToken).ConfigureAwait(false);
         if (string.IsNullOrWhiteSpace(pin))
         {
@@ -130,7 +133,7 @@ public static class HkpPersistent
         var expectedProof = Sha512(Concat(aPad, clientProof, sessionKey));
         if (!CryptographicOperations.FixedTimeEquals(expectedProof, serverProof))
         {
-            throw new CryptographicException("Pair-setup server proof mismatch — wrong AirPlay code?");
+            throw new CryptographicException($"Pair-setup server proof mismatch — wrong {secretName}?");
         }
 
         var clientPairingId = Guid.NewGuid().ToString().ToUpperInvariant();

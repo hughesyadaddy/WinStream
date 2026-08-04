@@ -3,43 +3,43 @@ using WinStream.Core.Streaming;
 
 namespace WinStream.Tests;
 
-public class ExtremeCaptureExperimentTests
+public class CaptureModePolicyTests
 {
     [Fact]
-    public void WantsEventDriven_requires_flag_and_Extreme()
+    public void WantsEventDriven_is_always_on_for_Auto_and_opt_in_for_Extreme()
     {
-        Assert.True(ExtremeCaptureExperiment.WantsEventDriven(
+        Assert.True(CaptureModePolicy.WantsEventDriven(
+            extremeEventDrivenCaptureEnabled: false,
+            PlaybackResponsiveness.Auto));
+        Assert.True(CaptureModePolicy.WantsEventDriven(
             extremeEventDrivenCaptureEnabled: true,
             PlaybackResponsiveness.LabPacket));
-        Assert.False(ExtremeCaptureExperiment.WantsEventDriven(
+        Assert.False(CaptureModePolicy.WantsEventDriven(
             extremeEventDrivenCaptureEnabled: false,
             PlaybackResponsiveness.LabPacket));
-        Assert.False(ExtremeCaptureExperiment.WantsEventDriven(
+        Assert.False(CaptureModePolicy.WantsEventDriven(
             extremeEventDrivenCaptureEnabled: true,
             PlaybackResponsiveness.Experimental));
-        Assert.False(ExtremeCaptureExperiment.WantsEventDriven(
-            extremeEventDrivenCaptureEnabled: true,
-            PlaybackResponsiveness.Auto));
     }
 
     [Fact]
-    public void ResolveContribution_uses_measured_p95_only_when_experiment_is_warm()
+    public void ResolveContribution_uses_measured_p95_only_when_event_driven_is_warm()
     {
         Assert.Equal(
             50,
-            ExtremeCaptureExperiment.ResolveContributionMilliseconds(
+            CaptureModePolicy.ResolveContributionMilliseconds(
                 useEventDrivenCapture: false,
                 hasMeasuredContribution: true,
                 measuredContributionMilliseconds: 10));
         Assert.Equal(
             50,
-            ExtremeCaptureExperiment.ResolveContributionMilliseconds(
+            CaptureModePolicy.ResolveContributionMilliseconds(
                 useEventDrivenCapture: true,
                 hasMeasuredContribution: false,
                 measuredContributionMilliseconds: 10));
         Assert.Equal(
             10,
-            ExtremeCaptureExperiment.ResolveContributionMilliseconds(
+            CaptureModePolicy.ResolveContributionMilliseconds(
                 useEventDrivenCapture: true,
                 hasMeasuredContribution: true,
                 measuredContributionMilliseconds: 10));
@@ -48,29 +48,30 @@ public class ExtremeCaptureExperimentTests
     [Fact]
     public void ArmsExhaustedPressureBanner_only_at_Extreme_ceiling()
     {
-        Assert.False(ExtremeCaptureExperiment.ArmsExhaustedPressureBanner(
-            PlaybackResponsiveness.LabPacket,
+        Assert.False(CaptureModePolicy.ArmsExhaustedPressureBanner(
             ladderExhausted: false,
             isStreaming: true,
             isSilent: false,
             pastStartupGrace: true));
-        Assert.True(ExtremeCaptureExperiment.ArmsExhaustedPressureBanner(
-            PlaybackResponsiveness.LabPacket,
+        Assert.True(CaptureModePolicy.ArmsExhaustedPressureBanner(
             ladderExhausted: true,
             isStreaming: true,
             isSilent: false,
             pastStartupGrace: true));
-        Assert.False(ExtremeCaptureExperiment.ArmsExhaustedPressureBanner(
-            PlaybackResponsiveness.LabPacket,
+        Assert.False(CaptureModePolicy.ArmsExhaustedPressureBanner(
             ladderExhausted: true,
             isStreaming: true,
             isSilent: true,
             pastStartupGrace: true));
-        Assert.False(ExtremeCaptureExperiment.ArmsExhaustedPressureBanner(
-            PlaybackResponsiveness.Experimental,
+        Assert.False(CaptureModePolicy.ArmsExhaustedPressureBanner(
+            ladderExhausted: true,
+            isStreaming: false,
+            isSilent: false,
+            pastStartupGrace: true));
+        Assert.False(CaptureModePolicy.ArmsExhaustedPressureBanner(
             ladderExhausted: true,
             isStreaming: true,
             isSilent: false,
-            pastStartupGrace: true));
+            pastStartupGrace: false));
     }
 }

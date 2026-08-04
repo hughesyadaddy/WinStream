@@ -1,3 +1,4 @@
+using WinStream.Core.Protocol.AirPlay2;
 using WinStream.Core.Streaming;
 
 namespace WinStream.Tests;
@@ -35,9 +36,20 @@ public class ConnectionFailureCopyTests
     }
 
     [Fact]
+    public void A_rejected_digest_password_names_the_wrong_password_not_required()
+    {
+        var exception = new AirPlayPasswordRejectedException(
+            "SETUP rejected the AirPlay password (RTSP 401 after Digest response).");
+
+        Assert.Equal(ConnectionFailureCopy.WrongPasswordRow, ConnectionFailureCopy.DeviceRow(exception));
+        Assert.Equal(ConnectionFailureCopy.WrongPasswordDetail, ConnectionFailureCopy.Detail(exception));
+    }
+
+    [Fact]
     public void An_unknown_failure_stays_generic_on_the_row()
     {
         Assert.Equal(ConnectionFailureCopy.GenericRow, ConnectionFailureCopy.DeviceRow("socket closed"));
         Assert.Equal("socket closed", ConnectionFailureCopy.Detail("socket closed"));
     }
 }
+

@@ -496,11 +496,8 @@ public sealed class AirPlay2Session : IAirPlaySession
                 return;
             }
 
-            await TimelineAnchorGate.RunAfterFreezeAsync(
-                    frozen.Task,
-                    RunAnchorLoopAsync,
-                    cancellationToken)
-                .ConfigureAwait(false);
+            await frozen.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+            await RunAnchorLoopAsync(cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {

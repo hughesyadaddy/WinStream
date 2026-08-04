@@ -1,12 +1,14 @@
 namespace WinStream.Core.Protocol.Raop;
 
+using WinStream.Core.Audio;
+
 /// <summary>
 /// Uncompressed ALAC frame encoder used by classic RAOP senders (owntone-style).
 /// Input must be little-endian interleaved PCM16 stereo.
 /// </summary>
 public static class AlacEncoder
 {
-    public const int FramesPerPacket = 352;
+    public const int FramesPerPacket = AudioPacingConstants.PacketFrames;
     public const int BytesPerFrame = 4;
     public const int PcmBytesPerPacket = FramesPerPacket * BytesPerFrame;
 

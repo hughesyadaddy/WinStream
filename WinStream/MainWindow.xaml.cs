@@ -8,6 +8,7 @@ using Microsoft.UI;
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.Diagnostics;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Threading;
@@ -52,8 +53,13 @@ namespace WinStream
         private readonly AppWindow _appWindow;
         private string _filterText = string.Empty;
         private string _streamingStatusDetail = string.Empty;
+        private uint? _lastDisplayedLatencyFrames;
+        private string _liveBufferChange = string.Empty;
+        private long _lastActivityPacketsSent;
+        private long _lastActivityTimestamp;
         private bool _allowClose;
         private bool _connectionInFlight;
+        private readonly PairingDialogPresenter _pairingDialogs;
         private bool _driverReadyPromptShown;
         private bool _suppressCaptureSelectionEvents;
         private bool _suppressAutoConnectEvents;
@@ -70,18 +76,19 @@ namespace WinStream
             InitializeComponent();
             _captureMonitor = new CaptureMonitorService(_settings);
             _streamingOrchestrator = new StreamingOrchestrator(_settings.EnsureSenderDeviceId());
+            _pairingDialogs = new PairingDialogPresenter(DispatcherQueue, () => Content?.XamlRoot);
             _link = LinkCoordinatorFactory.Create(_linkCredentials);
             _sinkModes = new SinkModeCoordinator(
                 ct => _streamingOrchestrator.DisconnectAsync(cancellationToken: ct),
                 _ => StopLinkAsync());
             _streamingOrchestrator.SetPairingPinPrompt(async ct =>
             {
-                var pin = await PromptForAirPlayPinAsync(ct);
+                var pin = await _pairingDialogs.PromptForPinAsync("pairing", ct);
                 return string.IsNullOrWhiteSpace(pin) ? null : pin;
             });
-            _streamingOrchestrator.SetReceiverPasswordPrompt(async ct =>
+            _streamingOrchestrator.SetReceiverPasswordPrompt(async (receiverKey, ct) =>
             {
-                var password = await PromptForAirPlayPasswordAsync(ct);
+                var password = await _pairingDialogs.PromptForPasswordAsync(receiverKey, ct);
                 return string.IsNullOrWhiteSpace(password) ? null : password;
             });
             var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
@@ -106,6 +113,12 @@ namespace WinStream
             _driverLifecycle.StateChanged += OnDriverLifecycleStateChanged;
             _streamingOrchestrator.StateChanged += (_, change) =>
                 DispatcherQueue.TryEnqueue(() => OnStreamingStateChanged(change));
+            _streamingOrchestrator.LiveQualityChanged += (_, _) =>
+                DispatcherQueue.TryEnqueue(() =>
+                {
+                    RefreshSessionStatus();
+                    RefreshLiveStreamActivity();
+                });
             _streamingOrchestrator.ExtremePressureChanged += (_, visible) =>
                 DispatcherQueue.TryEnqueue(() => ShowExtremePressure(visible));
 
@@ -917,7 +930,7 @@ namespace WinStream
                 playbackResponsivenessComboBox.Items.Add(CreateQualityOption(
                     PlaybackResponsiveness.Auto,
                     "Auto (recommended)",
-                    "Starts near ~250 ms and increases toward ~2 s if delivery pressure is detected. Not a guaranteed delay."));
+                    "Starts at ~50 ms and adjusts up or down automatically based on delivery pressure. Not a guaranteed delay."));
                 playbackResponsivenessComboBox.Items.Add(CreateQualityOption(
                     PlaybackResponsiveness.LabPacket,
                     StreamingQualityCopy.ExtremeLabel,
@@ -1150,150 +1163,6 @@ namespace WinStream
             // Fidelity is a converter setting, not a SETUP parameter, so it takes effect
             // on the live session without the tear-down that responsiveness needs.
             _streamingOrchestrator.SetAudioFidelity(mode);
-        }
-
-        /// <summary>
-        /// Collects the AirPlay code shown on the Mac during first-time persistent
-        /// pairing. Cancel falls back to transient pairing (Accept prompt every time).
-        /// </summary>
-        private Task<string> PromptForAirPlayPinAsync(CancellationToken cancellationToken)
-        {
-            var tcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
-            if (!DispatcherQueue.TryEnqueue(async () =>
-                {
-                    try
-                    {
-                        if (cancellationToken.IsCancellationRequested)
-                        {
-                            tcs.TrySetResult(string.Empty);
-                            return;
-                        }
-
-                        var pinBox = new TextBox
-                        {
-                            PlaceholderText = "4-digit AirPlay code"
-                        };
-                        AutomationProperties.SetName(pinBox, "AirPlay pairing code");
-
-                        var dialog = new ContentDialog
-                        {
-                            Title = "Enter AirPlay code",
-                            Content = new StackPanel
-                            {
-                                Spacing = 12,
-                                Children =
-                                {
-                                    new TextBlock
-                                    {
-                                        Text = PairingCopy.PromptBody,
-                                        TextWrapping = TextWrapping.WrapWholeWords
-                                    },
-                                    pinBox
-                                }
-                            },
-                            PrimaryButtonText = PairingCopy.TrustButton,
-                            CloseButtonText = PairingCopy.SkipButton,
-                            DefaultButton = ContentDialogButton.Primary,
-                            XamlRoot = Content.XamlRoot
-                        };
-
-                        using var reg = cancellationToken.Register(() =>
-                        {
-                            dialog.Hide();
-                            tcs.TrySetResult(string.Empty);
-                        });
-
-                        var result = await dialog.ShowAsync();
-                        if (result != ContentDialogResult.Primary)
-                        {
-                            tcs.TrySetResult(string.Empty);
-                            return;
-                        }
-
-                        tcs.TrySetResult(pinBox.Text?.Trim() ?? string.Empty);
-                    }
-                    catch (Exception ex)
-                    {
-                        tcs.TrySetException(ex);
-                    }
-                }))
-            {
-                tcs.TrySetResult(string.Empty);
-            }
-
-            return tcs.Task;
-        }
-
-        /// <summary>
-        /// Collects the System Settings AirPlay Receiver password when mDNS
-        /// advertises PasswordRequired and nothing is stored yet.
-        /// </summary>
-        private Task<string> PromptForAirPlayPasswordAsync(CancellationToken cancellationToken)
-        {
-            var tcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
-            if (!DispatcherQueue.TryEnqueue(async () =>
-                {
-                    try
-                    {
-                        if (cancellationToken.IsCancellationRequested)
-                        {
-                            tcs.TrySetResult(string.Empty);
-                            return;
-                        }
-
-                        var passwordBox = new PasswordBox
-                        {
-                            PlaceholderText = "AirPlay password"
-                        };
-                        AutomationProperties.SetName(passwordBox, "AirPlay Receiver password");
-
-                        var dialog = new ContentDialog
-                        {
-                            Title = PairingCopy.PasswordPromptTitle,
-                            Content = new StackPanel
-                            {
-                                Spacing = 12,
-                                Children =
-                                {
-                                    new TextBlock
-                                    {
-                                        Text = PairingCopy.PasswordPromptBody,
-                                        TextWrapping = TextWrapping.WrapWholeWords
-                                    },
-                                    passwordBox
-                                }
-                            },
-                            PrimaryButtonText = PairingCopy.PasswordButton,
-                            CloseButtonText = PairingCopy.PasswordCancelButton,
-                            DefaultButton = ContentDialogButton.Primary,
-                            XamlRoot = Content.XamlRoot
-                        };
-
-                        using var reg = cancellationToken.Register(() =>
-                        {
-                            dialog.Hide();
-                            tcs.TrySetResult(string.Empty);
-                        });
-
-                        var result = await dialog.ShowAsync();
-                        if (result != ContentDialogResult.Primary)
-                        {
-                            tcs.TrySetResult(string.Empty);
-                            return;
-                        }
-
-                        tcs.TrySetResult(passwordBox.Password ?? string.Empty);
-                    }
-                    catch (Exception ex)
-                    {
-                        tcs.TrySetException(ex);
-                    }
-                }))
-            {
-                tcs.TrySetResult(string.Empty);
-            }
-
-            return tcs.Task;
         }
 
         private async Task<bool> OfferLabEscapeToExperimentalAsync()
@@ -1602,6 +1471,8 @@ namespace WinStream
                 RefreshLinkStatusUi();
             }
 
+            RefreshLiveStreamActivity();
+
             if (!_captureMonitor.IsCapturing)
             {
                 captureLevelBar.Value = 0;
@@ -1610,6 +1481,112 @@ namespace WinStream
 
             // Soften display: RMS is typically << 1.0 for normal content.
             captureLevelBar.Value = Math.Clamp(_captureMonitor.CurrentRms * 4.0, 0, 1);
+        }
+
+        /// <summary>
+        /// Pushes the send pump's live counters to the status pill (and the metrics
+        /// flyout when open) every timer tick. Derives a measured packet rate from the
+        /// delta since the last tick so the numbers move even when Auto is holding the
+        /// buffer steady.
+        /// </summary>
+        private void RefreshLiveStreamActivity()
+        {
+            if (_streamingOrchestrator.LiveStats is not LiveStreamStats stats)
+            {
+                HideLiveStats();
+                return;
+            }
+
+            var now = Stopwatch.GetTimestamp();
+            var packetsPerSecond = 0.0;
+            if (_lastActivityTimestamp != 0)
+            {
+                var elapsedSeconds = (now - _lastActivityTimestamp) / (double)Stopwatch.Frequency;
+                if (elapsedSeconds > 0)
+                {
+                    packetsPerSecond =
+                        Math.Max(0, stats.PacketsSent - _lastActivityPacketsSent) / elapsedSeconds;
+                }
+            }
+
+            _lastActivityPacketsSent = stats.PacketsSent;
+            _lastActivityTimestamp = now;
+
+            var frames = _streamingOrchestrator.EffectiveLatencyFrames;
+            if (_lastDisplayedLatencyFrames is uint previousFrames &&
+                previousFrames != frames)
+            {
+                _liveBufferChange = AirPlayLiveQualityCopy.BufferChange(previousFrames, frames);
+            }
+
+            _lastDisplayedLatencyFrames = frames;
+
+            statusLiveStatsText.Text = AirPlayLiveQualityCopy.StatusCompact(frames, packetsPerSecond);
+            statusLiveStatsText.Visibility = Visibility.Visible;
+
+            if (liveMetricsFlyout.IsOpen)
+            {
+                ApplyLiveMetricsDetail(stats, packetsPerSecond, frames);
+            }
+        }
+
+        private void HideLiveStats()
+        {
+            if (statusLiveStatsText.Visibility == Visibility.Visible)
+            {
+                statusLiveStatsText.Visibility = Visibility.Collapsed;
+                statusLiveStatsText.Text = string.Empty;
+            }
+
+            _lastActivityPacketsSent = 0;
+            _lastActivityTimestamp = 0;
+        }
+
+        private void ApplyLiveMetricsDetail(
+            LiveStreamStats stats,
+            double packetsPerSecond,
+            uint frames)
+        {
+            var quality = AirPlayLiveQualityCopy.For(
+                _streamingOrchestrator.Responsiveness,
+                frames,
+                _streamingOrchestrator.Fidelity);
+
+            liveMetricsBufferText.Text = quality.Buffer;
+            liveMetricsConfigText.Text = quality.Metrics;
+            liveMetricsActivityText.Text = AirPlayLiveQualityCopy.LiveActivity(
+                stats.PacketsSent,
+                packetsPerSecond,
+                stats.QueueDepth,
+                stats.Drops,
+                stats.SlowSends);
+            liveMetricsChangeText.Text = _liveBufferChange;
+            liveMetricsChangeText.Visibility = string.IsNullOrEmpty(_liveBufferChange)
+                ? Visibility.Collapsed
+                : Visibility.Visible;
+            liveMetricsTooltipText.Text = quality.Tooltip;
+        }
+
+        private void LiveMetricsInfo_Click(object sender, RoutedEventArgs e)
+        {
+            // Seed the flyout immediately so the first open is not empty while waiting
+            // for the next 100 ms timer tick.
+            if (_streamingOrchestrator.LiveStats is LiveStreamStats stats)
+            {
+                ApplyLiveMetricsDetail(
+                    stats,
+                    packetsPerSecond: 0,
+                    _streamingOrchestrator.EffectiveLatencyFrames);
+            }
+            else
+            {
+                liveMetricsBufferText.Text = AirPlayLiveQualityCopy.IdleBuffer;
+                liveMetricsConfigText.Text = AirPlayLiveQualityCopy.IdleMetrics;
+                liveMetricsActivityText.Text = string.Empty;
+                liveMetricsChangeText.Text = string.Empty;
+                liveMetricsChangeText.Visibility = Visibility.Collapsed;
+                liveMetricsTooltipText.Text = string.Empty;
+            }
         }
 
         private void RefreshCaptureStatus()
@@ -2109,8 +2086,10 @@ namespace WinStream
             {
                 var message = LinkStatusCopy.For(BuildLinkUiContext());
                 statusPillText.Text = message.Pill;
+                ResetLiveQualityPanel();
                 statusDot.Fill = ThemeBrush(ToneBrushKey(message.Tone));
                 ToolTipService.SetToolTip(statusPill, message.Detail);
+                AutomationProperties.SetName(statusPill, message.Detail);
                 return;
             }
 
@@ -2128,15 +2107,47 @@ namespace WinStream
                 _ => ("Not connected", "TextFillColorSecondaryBrush")
             };
 
-            statusPillText.Text = text;
             statusDot.Fill = ThemeBrush(brushKey);
+            statusPillText.Text = text;
+
+            var showLiveQuality = _streamingOrchestrator.State is
+                SessionState.Connecting or
+                SessionState.Reconnecting or
+                SessionState.Streaming or
+                SessionState.Degraded;
+            if (!showLiveQuality)
+            {
+                ResetLiveQualityPanel();
+                ToolTipService.SetToolTip(statusPill, text);
+                AutomationProperties.SetName(statusPill, text);
+                return;
+            }
+
+            var quality = AirPlayLiveQualityCopy.For(
+                _streamingOrchestrator.Responsiveness,
+                _streamingOrchestrator.EffectiveLatencyFrames,
+                _streamingOrchestrator.Fidelity);
+            AutomationProperties.SetName(
+                statusPill,
+                $"{text}. {quality.Buffer}");
+
+            var healthDetail = _streamingOrchestrator.State == SessionState.Degraded
+                ? string.IsNullOrWhiteSpace(_streamingStatusDetail)
+                    ? "The stream is connected but one or more health checks are failing."
+                    : _streamingStatusDetail
+                : string.Empty;
             ToolTipService.SetToolTip(
                 statusPill,
-                _streamingOrchestrator.State == SessionState.Degraded
-                    ? string.IsNullOrWhiteSpace(_streamingStatusDetail)
-                        ? "The stream is connected but one or more health checks are failing."
-                        : _streamingStatusDetail
-                    : text);
+                string.IsNullOrEmpty(healthDetail)
+                    ? quality.Tooltip
+                    : healthDetail);
+        }
+
+        private void ResetLiveQualityPanel()
+        {
+            _lastDisplayedLatencyFrames = null;
+            _liveBufferChange = string.Empty;
+            HideLiveStats();
         }
 
         private void ShowMessage(InfoBarSeverity severity, string title, string message)

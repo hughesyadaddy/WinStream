@@ -88,9 +88,30 @@ public sealed class ReceiverPasswordStore : IReceiverPasswordStore
         }
         catch (Exception ex)
         {
-            AppLog.Info("password", $"Receiver password load failed: {ex.Message}");
+            QuarantineUnlocked(ex);
             return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         }
+    }
+
+    private void QuarantineUnlocked(Exception ex)
+    {
+        var backup = _path + ".corrupt";
+        try
+        {
+            if (File.Exists(_path))
+            {
+                File.Move(_path, backup, overwrite: true);
+            }
+        }
+        catch
+        {
+            // Best effort — still start empty.
+        }
+
+        AppLog.Warn(
+            "password",
+            $"Receiver password store reset after load failure ({ex.GetType().Name}: {ex.Message}). " +
+            $"Backup: {backup}");
     }
 
     private void Save(Dictionary<string, string> map)
