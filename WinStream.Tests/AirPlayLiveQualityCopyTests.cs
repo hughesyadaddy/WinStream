@@ -104,10 +104,11 @@ public class AirPlayLiveQualityCopyTests
             packetsPerSecond: 125.28,
             queueDepth: 2,
             drops: 0,
-            slowSends: 3);
+            slowSends: 3,
+            reanchors: 4);
 
         Assert.Equal(
-            "125,432 packets sent · 125.3 pkt/s · queue 2 · 0 drops · 3 slow sends",
+            "125,432 packets sent · 125.3 pkt/s · queue 2 · 0 drops · 3 slow sends · 4 re-anchors",
             line);
     }
 

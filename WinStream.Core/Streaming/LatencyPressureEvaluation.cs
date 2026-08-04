@@ -9,6 +9,7 @@ public static class LatencyPressureEvaluation
     public readonly record struct WindowSignals(
         long DropDelta,
         long SlowDelta,
+        long ReanchorDelta,
         bool IsStreaming,
         bool IsSilent,
         DateTimeOffset Now);
@@ -53,7 +54,8 @@ public static class LatencyPressureEvaluation
                     signals.SlowDelta,
                     signals.IsStreaming,
                     signals.IsSilent,
-                    signals.Now))
+                    signals.Now,
+                    signals.ReanchorDelta))
             {
                 return default;
             }
@@ -75,7 +77,8 @@ public static class LatencyPressureEvaluation
                 signals.SlowDelta,
                 signals.IsStreaming,
                 signals.IsSilent,
-                signals.Now))
+                signals.Now,
+                signals.ReanchorDelta))
         {
             return default;
         }
@@ -107,7 +110,10 @@ public static class LatencyPressureEvaluation
             latency.IsPastStartupGrace(signals.Now));
 
         var pressure = eligible &&
-                       LatencyAutoController.HasPressure(signals.DropDelta, signals.SlowDelta);
+                       LatencyAutoController.HasPressure(
+                           signals.DropDelta,
+                           signals.SlowDelta,
+                           signals.ReanchorDelta);
         var wasVisible = hysteresis.IsWarningVisible;
         var visible = hysteresis.ObserveWindow(pressure);
         return visible == wasVisible ? null : visible;

@@ -45,6 +45,7 @@ public sealed class StreamingOrchestrator : IAsyncDisposable
     private float _volumeDb;
     private long _dropsAtWindowStart;
     private long _slowAtWindowStart;
+    private long _reanchorsAtWindowStart;
     private DateTimeOffset _signalWindowStart = DateTimeOffset.UtcNow;
     private bool _audioStartedMarked;
     private bool _disposed;
@@ -599,6 +600,7 @@ public sealed class StreamingOrchestrator : IAsyncDisposable
         var signals = new LatencyPressureEvaluation.WindowSignals(
             pump.QueueDropCount - _dropsAtWindowStart,
             pump.SlowSendCount - _slowAtWindowStart,
+            pump.CatchUpClampCount - _reanchorsAtWindowStart,
             _aggregateState is SessionState.Streaming or SessionState.Degraded,
             isSilent,
             now);
@@ -620,7 +622,7 @@ public sealed class StreamingOrchestrator : IAsyncDisposable
                 AppLog.Warn(
                     "stream",
                     $"Extreme ladder exhausted under pressure drops={signals.DropDelta} " +
-                    $"slowSends={signals.SlowDelta}");
+                    $"slowSends={signals.SlowDelta} reanchors={signals.ReanchorDelta}");
             }
 
             ExtremePressureChanged?.Invoke(this, visible);
@@ -639,7 +641,8 @@ public sealed class StreamingOrchestrator : IAsyncDisposable
         AppLog.Info(
             "stream",
             $"{outcome.ModeLabel} latency adjusted to {_latency.EffectiveFrames} frames " +
-            $"(~{ms:0.######} ms) drops={signals.DropDelta} slowSends={signals.SlowDelta}");
+            $"(~{ms:0.######} ms) drops={signals.DropDelta} slowSends={signals.SlowDelta} " +
+            $"reanchors={signals.ReanchorDelta}");
 
         if (outcome.ClearExtremePressureBanner)
         {
@@ -678,6 +681,7 @@ public sealed class StreamingOrchestrator : IAsyncDisposable
         _signalWindowStart = DateTimeOffset.UtcNow;
         _dropsAtWindowStart = _sendPump?.QueueDropCount ?? 0;
         _slowAtWindowStart = _sendPump?.SlowSendCount ?? 0;
+        _reanchorsAtWindowStart = _sendPump?.CatchUpClampCount ?? 0;
     }
 
     private async Task DisconnectAllAsync(CancellationToken cancellationToken)

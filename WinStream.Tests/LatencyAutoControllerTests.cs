@@ -48,6 +48,13 @@ public class LatencyAutoControllerTests
     }
 
     [Fact]
+    public void HasPressure_treats_timeline_reanchors_as_delivery_stress()
+    {
+        Assert.False(LatencyAutoController.HasPressure(0, 0, 0));
+        Assert.True(LatencyAutoController.HasPressure(0, 0, 1));
+    }
+
+    [Fact]
     public void ResolveFixedFrames_matches_documented_constants_for_every_mode()
     {
         Assert.Equal(

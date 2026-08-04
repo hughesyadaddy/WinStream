@@ -1559,7 +1559,8 @@ namespace WinStream
                 packetsPerSecond,
                 stats.QueueDepth,
                 stats.Drops,
-                stats.SlowSends);
+                stats.SlowSends,
+                stats.Reanchors);
             liveMetricsChangeText.Text = _liveBufferChange;
             liveMetricsChangeText.Visibility = string.IsNullOrEmpty(_liveBufferChange)
                 ? Visibility.Collapsed

@@ -37,6 +37,7 @@ public class LatencyPressureEvaluationTests
         var signals = new LatencyPressureEvaluation.WindowSignals(
             DropDelta: 3,
             SlowDelta: 0,
+            ReanchorDelta: 0,
             IsStreaming: true,
             IsSilent: false,
             Now: T0.AddSeconds(6));
@@ -45,6 +46,27 @@ public class LatencyPressureEvaluationTests
 
         Assert.True(outcome.LatencyChanged);
         Assert.Equal("Auto", outcome.ModeLabel);
+        Assert.Equal(3520u, outcome.EffectiveFrames);
+    }
+
+    [Fact]
+    public void EvaluateLatencyChange_auto_raises_on_timeline_reanchor()
+    {
+        var latency = new LatencyAutoController();
+        latency.ResetForConnect(PlaybackResponsiveness.Auto);
+        latency.MarkAudioStarted(T0);
+
+        var signals = new LatencyPressureEvaluation.WindowSignals(
+            DropDelta: 0,
+            SlowDelta: 0,
+            ReanchorDelta: 1,
+            IsStreaming: true,
+            IsSilent: false,
+            Now: T0.AddSeconds(6));
+
+        var outcome = LatencyPressureEvaluation.EvaluateLatencyChange(latency, signals);
+
+        Assert.True(outcome.LatencyChanged);
         Assert.Equal(3520u, outcome.EffectiveFrames);
     }
 
@@ -61,6 +83,7 @@ public class LatencyPressureEvaluationTests
 
         var signals = new LatencyPressureEvaluation.WindowSignals(
             3,
+            0,
             0,
             true,
             false,

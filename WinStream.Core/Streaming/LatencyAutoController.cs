@@ -58,6 +58,12 @@ public sealed class LatencyAutoController
     public const int SlowSendRaiseThreshold = 5;
 
     /// <summary>
+    /// Timeline re-anchors in one signal window. Each clamp drops late packets and
+    /// bursts the next ones — a common crackle source that queue drops alone miss.
+    /// </summary>
+    public const int ReanchorRaiseThreshold = 1;
+
+    /// <summary>
     /// Consecutive clean signal windows required before Auto steps down one rung.
     /// </summary>
     public const int LowerCleanWindowsThreshold = 3;
@@ -112,9 +118,13 @@ public sealed class LatencyAutoController
         utcNow - _audioStartedUtc >= StartupGrace;
 
     /// <summary>Sender-side delivery pressure over one signal window.</summary>
-    public static bool HasPressure(long queueDropsInWindow, long slowSendsInWindow) =>
+    public static bool HasPressure(
+        long queueDropsInWindow,
+        long slowSendsInWindow,
+        long reanchorsInWindow = 0) =>
         queueDropsInWindow >= QueueDropRaiseThreshold ||
-        slowSendsInWindow >= SlowSendRaiseThreshold;
+        slowSendsInWindow >= SlowSendRaiseThreshold ||
+        reanchorsInWindow >= ReanchorRaiseThreshold;
 
     /// <summary>
     /// Auto-only: raises on pressure, lowers after sustained clean windows.
@@ -125,7 +135,8 @@ public sealed class LatencyAutoController
         long slowSendsInWindow,
         bool isStreaming,
         bool isSilent,
-        DateTimeOffset utcNow)
+        DateTimeOffset utcNow,
+        long reanchorsInWindow = 0)
     {
         if (!_autoEnabled || !isStreaming || isSilent)
         {
@@ -137,7 +148,7 @@ public sealed class LatencyAutoController
             return false;
         }
 
-        if (HasPressure(queueDropsInWindow, slowSendsInWindow))
+        if (HasPressure(queueDropsInWindow, slowSendsInWindow, reanchorsInWindow))
         {
             _consecutiveCleanWindows = 0;
             return TryRaiseAuto(utcNow);
@@ -155,12 +166,13 @@ public sealed class LatencyAutoController
         long slowSendsInWindow,
         bool isStreaming,
         bool isSilent,
-        DateTimeOffset utcNow)
+        DateTimeOffset utcNow,
+        long reanchorsInWindow = 0)
     {
         if (!_extremeRaiseEnabled ||
             !CanEvaluate(isStreaming, isSilent, utcNow) ||
             _effectiveFrames >= ExperimentalFrames ||
-            !HasPressure(queueDropsInWindow, slowSendsInWindow))
+            !HasPressure(queueDropsInWindow, slowSendsInWindow, reanchorsInWindow))
         {
             return false;
         }

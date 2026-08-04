@@ -68,11 +68,12 @@ public static class AirPlayLiveQualityCopy
         double packetsPerSecond,
         int queueDepth,
         long drops,
-        long slowSends)
+        long slowSends,
+        long reanchors = 0)
     {
         var rate = packetsPerSecond.ToString("0.0", CultureInfo.InvariantCulture);
         return $"{packetsSent:N0} packets sent · {rate} pkt/s · queue {queueDepth:N0} · " +
-               $"{drops:N0} drops · {slowSends:N0} slow sends";
+               $"{drops:N0} drops · {slowSends:N0} slow sends · {reanchors:N0} re-anchors";
     }
 
     public static string BufferChange(uint previousFrames, uint currentFrames)
